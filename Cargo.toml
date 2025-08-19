@@ -1,0 +1,19 @@
+[package]
+name = "dvb-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+chrono = "0.4.41"
+dvb = {path = "../dvb-rs"}
+schemars = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.47", features = ["full"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.rmcp]
+version = "0.6"
+features = ["transport-io", "elicitation", "macros", "schemars"]
