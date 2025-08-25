@@ -437,7 +437,13 @@ impl DVBServer {
             Err(e) => return Ok(error_text(format!("Failed to fetch route details: {e}"))),
         };
 
-        Ok(success_json(&route))
+        // Strip out partial_routes from each Route before returning
+        let mut routes = route.into_inner();
+        for r in &mut routes.routes {
+            r.partial_routes = None;
+        }
+
+        Ok(success_json(&routes))
     }
 
     #[tool(
