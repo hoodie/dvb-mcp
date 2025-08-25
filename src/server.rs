@@ -1,17 +1,19 @@
-use std::{future::Future, sync::Arc};
-
 use anyhow::{Result, anyhow};
-use dvb::{find_stops, point::Point};
+use chrono::{DateTime, FixedOffset};
 use rmcp::{
     ErrorData as McpError, ServerHandler, elicit_safe,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
     model::*,
     schemars::JsonSchema,
+    serde_json,
     service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+
+use dvb::{find_stops, point::Point};
+use std::{future::Future, sync::Arc};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "User information")]
@@ -31,15 +33,11 @@ pub struct DestinationInfo {
 elicit_safe!(OriginInfo);
 elicit_safe!(DestinationInfo);
 
-/// Simple tool request
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LocateUser {
-    pub location: String,
-}
-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LinesRequest {
-    pub start_query: String,
+    // pub start_query: Option<String>,
+    /// The ID of a point. Can be found via `lookup_point` function.
+    pub point_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -52,14 +50,29 @@ pub struct FindNearbyStationRequest {
     pub rough_stop_name: String,
 }
 
-use chrono::DateTime;
-use chrono::FixedOffset;
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FindPoiRequest {
+    /// Partial or full name of the point of interest to search for
+    pub rough_poi_name: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MonitorDeparturesRequest {
+    /// Partial or full stop name to search for
+    pub stop_name: String,
+    /// The ID of a point. Can be found via `lookup_point` function.
+    pub stop_id: String,
+    /// Optional list of modes of transport (e.g., ["Tram", "Bus"])
+    pub mot: Option<Vec<String>>,
+    /// Optional limit for number of departures
+    pub limit: Option<u32>,
+}
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TripDetailsRequest {
-    pub tripid: String,
+    pub trip_id: String,
     pub time: DateTime<FixedOffset>,
-    pub stopid: String,
+    /// The ID of a point. Can be found via `lookup_point` function.
+    pub stop_id: String,
     pub mapdata: Option<bool>,
 }
 
@@ -72,6 +85,17 @@ pub struct RouteRequest {
     pub shorttermchanges: Option<bool>,
     pub format: Option<String>,
     pub via: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OsmLinkRequest {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OsmLinkResponse {
+    pub link: String,
 }
 
 /// Simple server with elicitation
@@ -184,6 +208,25 @@ impl DVBServer {
         Ok(success_text(now))
     }
 
+    #[tool(description = "Returns a link to OpenStreetMap for the given coordinates.")]
+    fn osm_link(
+        &self,
+        Parameters(OsmLinkRequest {
+            latitude,
+            longitude,
+        }): Parameters<OsmLinkRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        // Basic validation
+        if !(latitude >= -90.0 && latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0) {
+            return Ok(error_text("Invalid latitude or longitude"));
+        }
+        let link = format!(
+            "https://www.openstreetmap.org/?mlat={}&mlon={}&zoom=17",
+            latitude, longitude
+        );
+        Ok(success_json(&OsmLinkResponse { link }))
+    }
+
     #[tool(
         description = "Clear the stored location for journey planning; will be requested again on next search."
     )]
@@ -235,29 +278,81 @@ impl DVBServer {
     }
 
     #[tool(
+        description = r#"Search for points of interest (POIs) in Dresden using a partial or approximate name.
+        Use this if you only get a rough description of a location or of where the user is to determine their location."#
+    )]
+    async fn find_pois(
+        &self,
+        Parameters(FindPoiRequest { rough_poi_name }): Parameters<FindPoiRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let found = match dvb::find_pois(&rough_poi_name).await {
+            Ok(found) => found,
+            Err(error) => {
+                return Ok(error_text(format!(
+                    "failed to find POI {rough_poi_name:?} {error}"
+                )));
+            }
+        };
+
+        Ok(success_json(&*found))
+    }
+    #[tool(
+        description = "Get upcoming departures from a specified stop or station in Dresden. Optionally filter by mode of transport and limit the number of results."
+    )]
+    async fn monitor_departures(
+        &self,
+        Parameters(MonitorDeparturesRequest {
+            stop_name,
+            stop_id,
+            mot,
+            limit,
+        }): Parameters<MonitorDeparturesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        // Parse Mot if provided
+        let mot_filter = mot.as_ref().map(|mot_list| {
+            mot_list
+                .iter()
+                .filter_map(|m| match m.as_str() {
+                    "Tram" => Some(dvb::Mot::Tram),
+                    "Bus" => Some(dvb::Mot::Bus),
+                    "Ferry" => Some(dvb::Mot::Ferry),
+                    "Train" => Some(dvb::Mot::Train),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let monitor_params = dvb::monitor::Params {
+            stopid: &stop_id,
+            mot: mot_filter.as_ref().map(|v| v.as_slice()),
+            limit,
+            ..Default::default()
+        };
+
+        let departures = match dvb::monitor::departure_monitor(monitor_params).await {
+            Ok(deps) => deps,
+            Err(error) => {
+                return Ok(error_text(format!(
+                    "failed to fetch departures for {stop_id}({stop_name:?}) {error}"
+                )));
+            }
+        };
+
+        Ok(success_json(&departures))
+    }
+    #[tool(
         description = "List all tram, bus, or train lines departing from a specified stop or station in Dresden."
     )]
     async fn list_lines(
         &self,
-        Parameters(LinesRequest { start_query }): Parameters<LinesRequest>,
+        Parameters(LinesRequest { point_id }): Parameters<LinesRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let found = match dvb::find_stops(&start_query).await {
-            Ok(found) => found,
-            Err(error) => {
-                return Ok(error_text(format!(
-                    "failed to find stop {start_query:?} {error}"
-                )));
-            }
+        let start_point_id = if let Some(point_id) = point_id {
+            point_id
+        } else {
+            return Ok(error_text("missing start point"));
         };
-        let start_point = match found.points.first() {
-            Some(start_point) => start_point,
-
-            None => {
-                return Ok(error_text(format!("no search results for {start_query:?}")));
-            }
-        };
-
-        let lines = match dvb::lines::lines(&start_point.id, None).await {
+        let lines = match dvb::lines::lines(&start_point_id, None).await {
             Ok(resp) => resp.into_inner(),
             Err(error) => {
                 return Ok(error_text(format!("failed to resolve lines {error}")));
@@ -273,18 +368,18 @@ impl DVBServer {
     async fn get_trip_details(
         &self,
         Parameters(TripDetailsRequest {
-            tripid,
+            trip_id,
             time,
-            stopid,
+            stop_id,
             mapdata,
         }): Parameters<TripDetailsRequest>,
     ) -> Result<CallToolResult, McpError> {
         let dvb_time = dvb::DvbTime::from(time);
 
         let params = dvb::trip::Params {
-            tripid: &tripid,
+            tripid: &trip_id,
             time: dvb_time,
-            stopid: &stopid,
+            stopid: &stop_id,
             mapdata,
         };
 
@@ -343,6 +438,33 @@ impl DVBServer {
         };
 
         Ok(success_json(&route))
+    }
+
+    #[tool(
+        description = "Look up the stop ID for a given stop name or query string in Dresden. Returns the stop ID if found."
+    )]
+    async fn lookup_stop_id_tool(
+        &self,
+        Parameters(FindStationRequest { rough_stop_name }): Parameters<FindStationRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let found = match dvb::find_stops(&rough_stop_name).await {
+            Ok(found) => found,
+            Err(error) => {
+                return Ok(error_text(format!(
+                    "failed to find stop {rough_stop_name:?} {error}"
+                )));
+            }
+        };
+        let stop = match found.points.first() {
+            Some(stop) => stop,
+            None => {
+                return Ok(error_text(format!(
+                    "no search results for {rough_stop_name:?}"
+                )));
+            }
+        };
+
+        Ok(success_json(&serde_json::json!({ "stop_id": stop.id })))
     }
 }
 
