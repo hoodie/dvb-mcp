@@ -1,0 +1,27 @@
+# Project Specification: "dvb-mcp"
+
+## Glossary
+
+| Term    | Definition                                                        |
+|---------|-------------------------------------------------------------------|
+| dvb     | Dresdner Verkehrsbetriebe                                         |
+| dvb-rs  | Library to use the public REST API of the DVB                     |
+| rmcp    | Library to annotate rust 'classes' to create MCP servers          |
+
+### About dvb-rs
+> An unofficial crate to query publicly accessible API methods for Dresden’s public transport system.
+fetch more under <https://docs.rs/dvb/latest/dvb/>
+
+### About rmcp
+> The official Rust SDK for the Model Context Protocol (MCP).
+> The MCP is a protocol that allows AI assistants to communicate with other services. rmcp is the official Rust implementation of this protocol.
+> There are two ways in which the library can be used, namely to build a server or to build a client.
+fetch more under <https://docs.rs/rmcp/latest/rmcp/>
+
+## Goal
+
+We are building an MCP server that is supposed to use the dvb api (via dvb-rs) to make requests to the dvb api.
+The full range of the dvb-rs api is supposed to be covered.
+We are aminig for optimal use of the mcp protocol.
+The goal is to enable the user to talk to an llm based agent and ask it for directions, departure times, ETAs.
+This is supposed to be a proper traffic guide.
