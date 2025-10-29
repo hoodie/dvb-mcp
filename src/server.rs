@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, FixedOffset};
 use rmcp::{
     ErrorData as McpError, ServerHandler, elicit_safe,
-    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
     schemars::JsonSchema,
     serde_json,
