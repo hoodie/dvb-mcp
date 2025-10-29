@@ -4,6 +4,7 @@ use tracing_subscriber::{self, EnvFilter};
 
 mod server;
 use server::DVBServer;
+mod route_cache;
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -12,8 +12,10 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use dvb::{find_stops, point::Point};
+use dvb::{DvbTime, find_stops, point::Point};
 use std::{future::Future, sync::Arc};
+
+use crate::route_cache::{self, LastFoundRoutes};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "User information")]
@@ -104,6 +106,8 @@ pub struct DVBServer {
     user_location: Arc<Mutex<Option<String>>>,
     user_destination: Arc<Mutex<Option<String>>>,
 
+    last_found_routes: Arc<Mutex<LastFoundRoutes>>,
+
     tool_router: ToolRouter<DVBServer>,
     prompts: Vec<Prompt>,
 }
@@ -125,7 +129,8 @@ impl Default for DVBServer {
         Self {
             user_location: Arc::new(Mutex::new(None)),
             user_destination: Arc::new(Mutex::new(None)),
-            tool_router: Self::tool_router(),
+            last_found_routes: Arc::new(Mutex::new(route_cache::LastFoundRoutes::default())),
+            tool_router: ToolRouter::default(),
             prompts,
         }
     }
@@ -407,7 +412,7 @@ impl DVBServer {
             via,
         }): Parameters<RouteRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let dvb_time = dvb::DvbTime::from(time);
+        let dvb_time = dvb::DvbTime::from(time.clone());
 
         let origin_id = match lookup_stop_id(&origin).await {
             Ok(resp) => resp,
@@ -436,15 +441,19 @@ impl DVBServer {
         let route = match dvb::route::route_details(&params).await {
             Ok(resp) => resp,
             Err(e) => return Ok(error_text(format!("Failed to fetch route details: {e}"))),
-        };
+        }
+        .into_inner();
 
-        // Strip out partial_routes from each Route before returning
-        let mut routes = route.into_inner();
-        for r in &mut routes.routes {
-            r.partial_routes = None;
+        // Store last found routes in the cache
+        {
+            let mut cache = self.last_found_routes.lock().await;
+            // Use origin+destination+time as session key for now (can be improved)
+            let session_key = format!("{}|{}|{}", origin, destination, time);
+            cache.store_routes(session_key, dbg!(route.routes.clone()));
         }
 
-        Ok(success_json(&routes))
+        Ok(success_json(&route))
+        // Ok(success_json(&()))
     }
 
     #[tool(
