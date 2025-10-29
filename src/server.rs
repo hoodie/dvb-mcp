@@ -217,7 +217,7 @@ impl DVBServer {
         }): Parameters<OsmLinkRequest>,
     ) -> Result<CallToolResult, McpError> {
         // Basic validation
-        if !(latitude >= -90.0 && latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0) {
+        if !((-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)) {
             return Ok(error_text("Invalid latitude or longitude"));
         }
         let link = format!(
@@ -324,7 +324,7 @@ impl DVBServer {
 
         let monitor_params = dvb::monitor::Params {
             stopid: &stop_id,
-            mot: mot_filter.as_ref().map(|v| v.as_slice()),
+            mot: mot_filter.as_deref(),
             limit,
             ..Default::default()
         };
@@ -475,7 +475,7 @@ impl DVBServer {
 }
 
 async fn lookup_stop_id(query: &str) -> anyhow::Result<String> {
-    let found_origin = find_stops(&query).await?;
+    let found_origin = find_stops(query).await?;
     let Point { id, .. } = found_origin
         .points
         .first()
@@ -536,17 +536,18 @@ impl ServerHandler for DVBServer {
         }
     }
 
-    fn list_prompts(
-        &self,
-        _request: Option<PaginatedRequestParam>,
-        _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + Send {
-        let prompts = self.prompts.clone();
-        async {
-            Ok(ListPromptsResult {
-                next_cursor: None,
-                prompts,
-            })
-        }
-    }
+    // fn list_prompts(
+    //     &self,
+    //     _request: Option<PaginatedRequestParam>,
+    //     _context: RequestContext<RoleServer>,
+    // ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + Send {
+    //     let prompts = self.prompts.clone();
+    //     async {
+    //         Ok(ListPromptsResult {
+    //             next_cursor: None,
+    //             prompts,
+    //             meta: None,
+    //         })
+    //     }
+    // }
 }
