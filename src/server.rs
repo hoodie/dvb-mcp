@@ -277,10 +277,10 @@ impl DVBServer {
         Ok(success_json(&*found))
     }
 
-    #[tool(
-        description = r#"Search for points of interest (POIs) in Dresden using a partial or approximate name.
-        Use this if you only get a rough description of a location or of where the user is to determine their location."#
-    )]
+    #[tool(description = "
+        Search for points of interest (POIs) in Dresden using a partial or approximate name.
+        Use this if you only get a rough description of a location or of where the user is to determine their location.
+        ")]
     async fn find_pois(
         &self,
         Parameters(FindPoiRequest { rough_poi_name }): Parameters<FindPoiRequest>,
@@ -296,9 +296,10 @@ impl DVBServer {
 
         Ok(success_json(&*found))
     }
-    #[tool(
-        description = "Get upcoming departures from a specified stop or station in Dresden. Optionally filter by mode of transport and limit the number of results."
-    )]
+    #[tool(description = "
+        Get upcoming departures from a specified stop or station in Dresden.
+        Optionally filter by mode of transport and limit the number of results.
+        ")]
     async fn monitor_departures(
         &self,
         Parameters(MonitorDeparturesRequest {
@@ -362,9 +363,9 @@ impl DVBServer {
         Ok(success_json(&lines))
     }
 
-    #[tool(
-        description = "Get detailed information for a specific trip, including all stops and times. Time must be an ISO8601 string."
-    )]
+    #[tool(description = "
+        Get detailed information for a specific trip, including all stops and times.
+        Time must be an ISO8601 string.")]
     async fn get_trip_details(
         &self,
         Parameters(TripDetailsRequest {
@@ -391,14 +392,14 @@ impl DVBServer {
         Ok(success_json(&*trip))
     }
 
-    #[tool(
-        description = "Query possible routes between two stops in Dresden. Returns possible trips, departure and arrival info, etc."
-    )]
+    #[tool(description = "
+        Query possible routes between two stops in Dresden.
+        Returns possible trips, departure and arrival info, etc.")]
     async fn get_route_details(
         &self,
         Parameters(RouteRequest {
-            origin,
-            destination,
+            origin,      // TODO: replace with origin_id
+            destination, // TODO: replace with destination_id
             time,
             isarrivaltime,
             shorttermchanges,
@@ -487,11 +488,14 @@ async fn lookup_stop_id(query: &str) -> anyhow::Result<String> {
 impl ServerHandler for DVBServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().enable_prompts().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some(
-                "Simple server demonstrating elicitation for user name collection and agent prompt support for Dresden public transport.".to_string(),
-            ),
+            instructions: Some(String::from(
+                "Simple server demonstrating elicitation for user name collection and agent prompt support for Dresden public transport.",
+            )),
             ..Default::default()
         }
     }
