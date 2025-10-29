@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use dvb::route::{PartialRoute, Route};
 
 /// Type aliases for clarity
-pub type RouteKey = String; // e.g., "direction|name|product_name"
+pub type RouteKey = String; // e.g., "direction|name|product_name|departure_time"
 pub type PartialRouteKey = String; // same pattern
 
 /// Short summary of a route for display and lookup
@@ -13,7 +13,13 @@ pub type PartialRouteKey = String; // same pattern
 pub struct RouteSummary {
     pub key: RouteKey,
     pub summary: String,
-    pub is_future: bool,
+    pub departure_time: DateTime<Local>,
+}
+
+impl RouteSummary {
+    pub fn is_future(&self, now: DateTime<Local>) -> bool {
+        self.departure_time > now
+    }
 }
 
 /// Cache for last found routes (global, not per-session)
@@ -24,8 +30,19 @@ pub struct RouteCache {
     pub route_to_partial: HashMap<RouteKey, Vec<PartialRouteKey>>,
 }
 
-pub fn make_composite_key(direction: &str, name: &str, product_name: &str) -> String {
-    format!("{}|{}|{}", direction, name, product_name)
+pub fn make_composite_key(
+    direction: &str,
+    name: &str,
+    product_name: &str,
+    departure_time: DateTime<Local>,
+) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        direction,
+        name,
+        product_name,
+        departure_time.format("%Y%m%dT%H%M%S")
+    )
 }
 
 impl RouteCache {
@@ -38,10 +55,12 @@ impl RouteCache {
         for route in routes {
             // Use the first MotChain as the main leg for the route key
             if let Some(mot_chain) = route.mot_chain.as_ref().and_then(|mc| mc.get(0)) {
+                let (_, _, departure_time) = extract_route_info(&route);
                 let key = make_composite_key(
                     mot_chain.direction.as_deref().unwrap_or(""),
                     mot_chain.name.as_deref().unwrap_or(""),
                     mot_chain.product_name.as_deref().unwrap_or(""),
+                    departure_time,
                 );
                 self.routes.insert(key.clone(), route.clone());
 
@@ -50,10 +69,23 @@ impl RouteCache {
                     let mut partial_keys = Vec::new();
                     for partial in partials {
                         if let Some(mot) = partial.mot.as_ref() {
+                            // For partials, try to extract departure_time from the first stop
+                            let partial_departure_time = partial
+                                .regular_stops
+                                .as_ref()
+                                .and_then(|stops| stops.get(0))
+                                .and_then(|stop| stop.departure_time.clone())
+                                .map(|dvb_time| {
+                                    let dt_fixed: chrono::DateTime<chrono::FixedOffset> =
+                                        dvb_time.to_datetime();
+                                    dt_fixed.with_timezone(&Local)
+                                })
+                                .unwrap_or_else(|| Local::now());
                             let pkey = make_composite_key(
                                 mot.direction.as_deref().unwrap_or(""),
                                 mot.name.as_deref().unwrap_or(""),
                                 mot.product_name.as_deref().unwrap_or(""),
+                                partial_departure_time,
                             );
                             self.partial_routes.insert(pkey.clone(), partial.clone());
                             partial_keys.push(pkey);
@@ -105,11 +137,10 @@ impl RouteCache {
                 destination,
                 departure_time.format("%H:%M")
             );
-            let is_future = departure_time > now;
             summaries.push(RouteSummary {
                 key: key.clone(),
                 summary,
-                is_future,
+                departure_time,
             });
         }
         summaries
@@ -150,8 +181,8 @@ fn extract_route_info(route: &Route) -> (String, String, DateTime<Local>) {
         .and_then(|prs| prs.get(0))
         .and_then(|pr| pr.regular_stops.as_ref()?.get(0))
         .and_then(|stop| stop.departure_time)
-        .map(|dvb_time| dvb_time.into())
-        .unwrap_or_else(|| Local::now()); // fallback to now if missing
+        .map(|dvb_time| dvb_time.to_datetime()
+        .unwrap_or_else(|| Local::now().into()); // fallback to now if missing
 
     (origin, destination, departure_time)
 }
