@@ -178,6 +178,37 @@ impl DVBServer {
         Ok(success_text(format!("Starting from {}!", current_location)))
     }
 
+    /// List summaries of all cached routes that are in the future.
+    #[tool(
+        description = "List summaries of all cached routes that are in the future. Useful for follow-up questions after a route search."
+    )]
+    async fn list_cached_route_summaries(
+        &self,
+    ) -> Result<CallToolResult, McpError> {
+        let now = chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap());
+        let cache = self.route_cache.lock().await;
+        let summaries = cache.get_route_summaries(now);
+        let summary_strings: Vec<String> = summaries.iter().map(|s| s.summary.clone()).collect();
+        Ok(success_json(&summary_strings))
+    }
+
+    /// Get details for a cached route by its summary string.
+    #[tool(
+        description = "Get details for a cached route by its summary string. Use this after listing cached route summaries."
+    )]
+    async fn get_cached_route_by_summary(
+        &self,
+        summary: String,
+    ) -> Result<CallToolResult, McpError> {
+        let now = chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap());
+        let cache = self.route_cache.lock().await;
+        if let Some(route) = cache.get_route_by_summary(&summary, now) {
+            Ok(success_json(route))
+        } else {
+            Ok(error_text(format!("No cached route found for summary: {}", summary)))
+        }
+    }
+
     #[tool(
         description = "Ask the user's destination. This is to be used as the end point for trips."
     )]
