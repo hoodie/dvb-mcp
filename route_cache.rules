@@ -1,0 +1,6 @@
+# implement a semantic route cache
+
+We do not want to expose the entire route response directly to the AI agent as this would fill up too much of its context.
+instead we want to build a sort of database/cache for routes that allows the MCP user to query with follow up questions.
+
+for this we take the response of `pub async fn route_details<'a>(params: &Params<'a>) -> Result<DvbResponse<Routes>>` and semantically store it.

@@ -12,10 +12,10 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use dvb::{DvbTime, find_stops, point::Point};
+use dvb::{find_stops, point::Point};
 use std::{future::Future, sync::Arc};
 
-use crate::route_cache::{self, LastFoundRoutes};
+use crate::route_cache::RouteCache;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "User information")]
@@ -106,7 +106,7 @@ pub struct DVBServer {
     user_location: Arc<Mutex<Option<String>>>,
     user_destination: Arc<Mutex<Option<String>>>,
 
-    last_found_routes: Arc<Mutex<LastFoundRoutes>>,
+    route_cache: Arc<Mutex<RouteCache>>,
 
     tool_router: ToolRouter<DVBServer>,
     prompts: Vec<Prompt>,
@@ -129,7 +129,7 @@ impl Default for DVBServer {
         Self {
             user_location: Arc::new(Mutex::new(None)),
             user_destination: Arc::new(Mutex::new(None)),
-            last_found_routes: Arc::new(Mutex::new(route_cache::LastFoundRoutes::default())),
+            route_cache: Arc::new(Mutex::new(RouteCache::default())),
             tool_router: ToolRouter::default(),
             prompts,
         }
@@ -446,10 +446,10 @@ impl DVBServer {
 
         // Store last found routes in the cache
         {
-            let mut cache = self.last_found_routes.lock().await;
+            let mut cache = self.route_cache.lock().await;
             // Use origin+destination+time as session key for now (can be improved)
             let session_key = format!("{}|{}|{}", origin, destination, time);
-            cache.store_routes(session_key, dbg!(route.routes.clone()));
+            cache.store_routes(dbg!(route.routes.clone()));
         }
 
         Ok(success_json(&route))
