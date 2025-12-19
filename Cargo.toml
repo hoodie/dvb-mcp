@@ -15,5 +15,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dependencies.rmcp]
-version = "0.11"
+version = "0.12"
 features = ["transport-io", "elicitation", "macros", "schemars"]
