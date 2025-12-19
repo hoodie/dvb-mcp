@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 chrono = "0.4.42"
-dvb = "0.7"
+dvb = {version = "0.7.2", features = ["iso8601-serialization"]}
 schemars = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.48", features = ["full"] }

@@ -27,9 +27,17 @@ The server can be configured using environment variables:
 RUST_LOG=info
 ```
 
+## MCP Prompts
+
+This server provides the following MCP prompts for Dresden's transit system:
+
+- `navigation-assistant`: Interactive assistant for comprehensive journey planning and navigation.
+- `departure-monitor`: Real-time departure board for checking when the next vehicles are leaving from a specific station.
+- `trip-tracker`: Track the progress of a trip and provide updates on its status.
+
 ## MCP Tools
 
-This server provides the following MCP tools for Dresden’s transit system:
+This server provides the following MCP tools for Dresden's transit system:
 
 - `elicit_origin`: Ask the user for their current location (starting point).
 - `elicit_destination`: Ask the user for their desired destination.
@@ -66,7 +74,19 @@ To test with MCP Inspector:
 
 ## Example Usage with Claude
 
-[Here’s an example](https://claude.ai/share/41f6ee24-1f5d-4e54-9d34-1645ad55b457) interaction with Claude using this MCP server to find a route and schedule for Dresden’s trams.
+[Here's an example](https://claude.ai/share/41f6ee24-1f5d-4e54-9d34-1645ad55b457) interaction with Claude using this MCP server to find a route and schedule for Dresden's trams.
+
+### Using the Departure Monitor
+
+Ask Claude to use the `departure-monitor` prompt for quick departure information:
+
+```
+"When is the next tram from Postplatz?"
+"Show me departures from Hauptbahnhof"
+"What's leaving from Albertplatz right now?"
+```
+
+The departure monitor provides fast, focused answers about upcoming departures without requiring full journey planning.
 
 ## Development
 

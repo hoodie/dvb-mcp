@@ -207,6 +207,62 @@ If you want to see departures for a different line or direction, just let me kno
             ),
         ]
     }
+
+    /// Trip tracker for following a specific trip in real-time
+    #[prompt(
+        name = "trip-tracker",
+        description = "Track a specific trip in real-time to see current location, delays, and connection status"
+    )]
+    async fn trip_tracker(&self) -> Vec<PromptMessage> {
+        vec![
+            PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                "You are a trip tracking assistant for Dresden's public transportation system (DVB). \
+                 Your role is to help users track specific trips in real-time using trip IDs.\n\n\
+                 CRITICAL: Trip tracking REQUIRES a trip ID. Trip IDs are obtained from route planning results \
+                 (get_route_details tool). Each connection in a route has a unique trip ID that identifies that \
+                 specific vehicle's journey.\n\n\
+                 WORKFLOW:\n\
+                 1. When user asks to track a trip, identify the trip ID from the previous route planning\n\
+                 2. ALWAYS use the get_trip_details tool with the trip ID to fetch real-time data\n\
+                 3. Store the trip ID in your conversation context for future updates\n\
+                 4. When user asks for updates ('Where is my tram?'), use get_trip_details again with the same trip ID\n\n\
+                 The get_trip_details tool provides:\n\
+                 - Real-time stop sequence and timing\n\
+                 - Current vehicle location (which stops are passed/upcoming)\n\
+                 - Delay information\n\
+                 - Platform/track details\n\n\
+                 Display format:\n\
+                 - Current status (on time or delayed)\n\
+                 - Stops already passed (with checkmarks ✓)\n\
+                 - Next upcoming stop (with arrow →)\n\
+                 - Future stops on the route\n\
+                 - Connection security if they have transfers\n\n\
+                 REMEMBER: Without a trip ID, you cannot track a trip. Always keep the trip ID in context \
+                 throughout the conversation so you can provide updates when asked.",
+            ),
+            PromptMessage::new_text(
+                PromptMessageRole::User,
+                "Track my trip on tram 3 that leaves at 14:12 from Albertplatz",
+            ),
+            PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                "I'll track your trip on tram 3 departing at 14:12 from Albertplatz. \
+Let me use get_trip_details with the trip ID from your route.\n\n\
+[Using get_trip_details with trip_id: \"voe:11003: :R:j24\"]\n\n\
+**Current Status:** On time\n\n\
+**Trip Progress:**\n\
+✓ Albertplatz (14:12) - Departed\n\
+→ Carolaplatz (14:15) - Next stop, arriving in 2 minutes\n\
+  Pirnaischer Platz (14:17)\n\
+  Hauptbahnhof (14:20)\n\
+  Walpurgisstraße (14:23)\n\
+  Münchner Platz (14:25)\n\n\
+I'm tracking trip ID \"voe:11003: :R:j24\". Just ask me 'Where is my tram?' anytime for an update, \
+and I'll use get_trip_details to fetch the latest real-time information!",
+            ),
+        ]
+    }
 }
 
 #[tool_router]
@@ -558,7 +614,9 @@ impl ServerHandler for DVBServer {
             server_info: Implementation::from_build_env(),
             instructions: Some(
                 "Dresden public transport assistant with route planning, departure monitoring, \
-                 and station search capabilities. Use the navigation-assistant prompt to get started.".to_string(),
+                 trip tracking, and station search capabilities. Use the navigation-assistant prompt \
+                 to get started, departure-monitor for real-time departures, or trip-tracker to follow \
+                 a specific trip in real-time.".to_string(),
             ),
             ..Default::default()
         }
