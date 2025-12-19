@@ -23,13 +23,22 @@ mod args {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    #[schemars(description = "User information")]
+    #[schemars(description = "User origin (journey starting point) information")]
     pub struct OriginInfo {
-        #[schemars(description = "User's origin")]
-        pub location: String,
+        #[schemars(description = "User's journey origin/starting point")]
+        pub origin: String,
     }
     // Mark as safe for elicitation
     elicit_safe!(OriginInfo);
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    #[schemars(description = "User current location information")]
+    pub struct LocationInfo {
+        #[schemars(description = "User's current location")]
+        pub location: String,
+    }
+    // Mark as safe for elicitation
+    elicit_safe!(LocationInfo);
 
     #[derive(Debug, Serialize, Deserialize, JsonSchema)]
     #[schemars(description = "User destination information")]
@@ -110,9 +119,108 @@ pub struct OsmLinkResponse {
     pub link: String,
 }
 
+/// Status of user context completeness
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum UserContextStatus {
+    /// All three fields (origin, location, destination) are set
+    Complete,
+    /// At least one field is set, but not all
+    Partial,
+    /// No fields are set
+    Empty,
+}
+
+/// User context containing origin, current location, and destination
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UserContext {
+    /// Where the user's journey starts
+    pub origin: Option<String>,
+    /// Where the user currently is
+    pub location: Option<String>,
+    /// Where the user wants to go
+    pub destination: Option<String>,
+    /// Last time context was updated
+    pub last_updated: String,
+    /// Whether any context is available
+    pub context_available: bool,
+    /// Status of context completeness
+    pub status: UserContextStatus,
+    /// Human-readable description of the context
+    pub message: String,
+}
+
+impl UserContext {
+    /// Create a new UserContext from the given values
+    pub fn new(
+        origin: Option<String>,
+        location: Option<String>,
+        destination: Option<String>,
+    ) -> Self {
+        let any_set = origin.is_some() || location.is_some() || destination.is_some();
+        let all_set = origin.is_some() && location.is_some() && destination.is_some();
+
+        let status = if all_set {
+            UserContextStatus::Complete
+        } else if any_set {
+            UserContextStatus::Partial
+        } else {
+            UserContextStatus::Empty
+        };
+
+        let message = match (&origin, &location, &destination) {
+            (Some(org), Some(loc), Some(dest)) => {
+                format!(
+                    "User journey: Origin: {}, Current location: {}, Destination: {}",
+                    org, loc, dest
+                )
+            }
+            (Some(org), Some(loc), None) => {
+                format!(
+                    "User origin: {}, Current location: {} (destination not set)",
+                    org, loc
+                )
+            }
+            (Some(org), None, Some(dest)) => {
+                format!(
+                    "User origin: {}, Destination: {} (current location not set)",
+                    org, dest
+                )
+            }
+            (None, Some(loc), Some(dest)) => {
+                format!(
+                    "Current location: {}, Destination: {} (origin not set)",
+                    loc, dest
+                )
+            }
+            (Some(org), None, None) => {
+                format!("User origin: {} (location and destination not set)", org)
+            }
+            (None, Some(loc), None) => {
+                format!("Current location: {} (origin and destination not set)", loc)
+            }
+            (None, None, Some(dest)) => {
+                format!("Destination: {} (origin and location not set)", dest)
+            }
+            (None, None, None) => "No user context saved yet".to_string(),
+        };
+
+        Self {
+            origin,
+            location,
+            destination,
+            last_updated: chrono::Local::now().to_rfc3339(),
+            context_available: any_set,
+            status,
+            message,
+        }
+    }
+}
+
 /// Simple server with elicitation
 #[derive(Clone)]
 pub struct DVBServer {
+    user_origin: Arc<Mutex<Option<String>>>,
     user_location: Arc<Mutex<Option<String>>>,
     user_destination: Arc<Mutex<Option<String>>>,
 
@@ -123,6 +231,7 @@ pub struct DVBServer {
 impl Default for DVBServer {
     fn default() -> Self {
         Self {
+            user_origin: Arc::new(Mutex::new(None)),
             user_location: Arc::new(Mutex::new(None)),
             user_destination: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
@@ -268,9 +377,53 @@ and I'll use get_trip_details to fetch the latest real-time information!",
 #[tool_router]
 impl DVBServer {
     #[tool(
-        description = "Ask the user's current location. This is to be used as the start point for trips. It is likely nearby a station."
+        // name = "get_user_context",
+        description = "IMPORTANT: Call this at the start of conversations to get user's saved origin, current location, destination, and preferences. Returns all context in one call to avoid redundant questions."
+    )]
+    async fn get_user_context(&self) -> Result<CallToolResult, McpError> {
+        let origin = self.user_origin.lock().await.clone();
+        let location = self.user_location.lock().await.clone();
+        let destination = self.user_destination.lock().await.clone();
+
+        let context = UserContext::new(origin, location, destination);
+
+        Ok(success_json(&context))
+    }
+
+    #[tool(
+        description = "Ask the user's journey origin/starting point. This is where the user's journey begins."
     )]
     async fn elicit_origin(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let current_origin = if let Some(origin) = self.user_origin.lock().await.clone() {
+            origin
+        } else {
+            match context
+                .peer
+                .elicit::<args::OriginInfo>(
+                    "Please provide where you are starting from".to_string(),
+                )
+                .await
+            {
+                Ok(Some(user_info)) => {
+                    let origin = user_info.origin.clone();
+                    *self.user_origin.lock().await = Some(origin.clone());
+                    origin
+                }
+                Ok(None) => "Hauptbahnhof Dresden".to_string(), // Never happen if client checks schema
+                Err(_) => return Ok(error_text("unable to determine origin")),
+            }
+        };
+
+        Ok(success_text(format!("Starting from {}!", current_origin)))
+    }
+
+    #[tool(
+        description = "Ask the user's current location. This is where the user is right now, which may differ from their journey origin."
+    )]
+    async fn elicit_location(
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
@@ -279,7 +432,7 @@ impl DVBServer {
         } else {
             match context
                 .peer
-                .elicit::<args::OriginInfo>("Please provide you are starting from".to_string())
+                .elicit::<args::LocationInfo>("Please provide where you are right now".to_string())
                 .await
             {
                 Ok(Some(user_info)) => {
@@ -288,11 +441,11 @@ impl DVBServer {
                     location
                 }
                 Ok(None) => "Hauptbahnhof Dresden".to_string(), // Never happen if client checks schema
-                Err(_) => return Ok(error_text("unable to determine origin")),
+                Err(_) => return Ok(error_text("unable to determine location")),
             }
         };
 
-        Ok(success_text(format!("Starting from {}!", current_location)))
+        Ok(success_text(format!("Currently at {}!", current_location)))
     }
 
     #[tool(
@@ -302,26 +455,63 @@ impl DVBServer {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let current_destination =
-            if let Some(destination) = self.user_destination.lock().await.clone() {
-                destination
-            } else {
-                match context
-                    .peer
-                    .elicit::<args::DestinationInfo>("Please provide where you want to go.".to_string())
-                    .await
-                {
-                    Ok(Some(dest_info)) => {
-                        let destination = dest_info.destination.clone();
-                        *self.user_destination.lock().await = Some(destination.clone());
-                        destination
-                    }
-                    Ok(None) => "Hauptbahnhof Dresden".to_string(),
-                    Err(_) => return Ok(error_text("unable to determine destination")),
+        let current_destination = if let Some(destination) =
+            self.user_destination.lock().await.clone()
+        {
+            destination
+        } else {
+            match context
+                .peer
+                .elicit::<args::DestinationInfo>("Please provide where you want to go.".to_string())
+                .await
+            {
+                Ok(Some(dest_info)) => {
+                    let destination = dest_info.destination.clone();
+                    *self.user_destination.lock().await = Some(destination.clone());
+                    destination
                 }
-            };
+                Ok(None) => "Hauptbahnhof Dresden".to_string(),
+                Err(_) => return Ok(error_text("unable to determine destination")),
+            }
+        };
 
         Ok(success_text(format!("Going to {}!", current_destination)))
+    }
+
+    #[tool(
+        description = "Set the user's journey origin/starting point directly when provided in conversation. Use this when the user tells you where they're starting from (e.g., 'I'm at Hauptbahnhof'). For interactive prompting, use elicit_origin instead."
+    )]
+    async fn set_origin(
+        &self,
+        Parameters(args::OriginInfo { origin }): Parameters<args::OriginInfo>,
+    ) -> Result<CallToolResult, McpError> {
+        *self.user_origin.lock().await = Some(origin.clone());
+        Ok(success_text(format!("Origin set to: {}", origin)))
+    }
+
+    #[tool(
+        description = "Set the user's current location directly when provided in conversation. Use this when the user tells you where they are right now (e.g., 'I'm currently at Altmarkt'). For interactive prompting, use elicit_location instead."
+    )]
+    async fn set_location(
+        &self,
+        Parameters(args::LocationInfo { location }): Parameters<args::LocationInfo>,
+    ) -> Result<CallToolResult, McpError> {
+        *self.user_location.lock().await = Some(location.clone());
+        Ok(success_text(format!(
+            "Current location set to: {}",
+            location
+        )))
+    }
+
+    #[tool(
+        description = "Set the user's destination directly when provided in conversation. Use this when the user tells you where they want to go (e.g., 'I need to go to the airport'). For interactive prompting, use elicit_destination instead."
+    )]
+    async fn set_destination(
+        &self,
+        Parameters(args::DestinationInfo { destination }): Parameters<args::DestinationInfo>,
+    ) -> Result<CallToolResult, McpError> {
+        *self.user_destination.lock().await = Some(destination.clone());
+        Ok(success_text(format!("Destination set to: {}", destination)))
     }
 
     #[tool(description = "Returns the current local time in ISO8601 (RFC3339) format.")]
@@ -350,12 +540,14 @@ impl DVBServer {
     }
 
     #[tool(
-        description = "Clear the stored location for journey planning; will be requested again on next search."
+        description = "Clear the stored origin, location, and destination for journey planning; will be requested again on next search."
     )]
-    async fn reset_location(&self) -> Result<CallToolResult, McpError> {
+    async fn reset_context(&self) -> Result<CallToolResult, McpError> {
+        *self.user_origin.lock().await = None;
         *self.user_location.lock().await = None;
+        *self.user_destination.lock().await = None;
         Ok(success_text(
-            "User location reset. Next greeting will ask for name again.",
+            "User origin, location, and destination reset. They will be requested again when needed.",
         ))
     }
 
@@ -364,7 +556,9 @@ impl DVBServer {
     )]
     async fn find_stations(
         &self,
-        Parameters(args::FindStationRequest { rough_stop_name }): Parameters<args::FindStationRequest>,
+        Parameters(args::FindStationRequest { rough_stop_name }): Parameters<
+            args::FindStationRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let found = match dvb::find_stops(&rough_stop_name).await {
             Ok(found) => found,
@@ -573,7 +767,9 @@ impl DVBServer {
     )]
     async fn lookup_stop_id_tool(
         &self,
-        Parameters(args::FindStationRequest { rough_stop_name }): Parameters<args::FindStationRequest>,
+        Parameters(args::FindStationRequest { rough_stop_name }): Parameters<
+            args::FindStationRequest,
+        >,
     ) -> Result<CallToolResult, McpError> {
         let found = match dvb::find_stops(&rough_stop_name).await {
             Ok(found) => found,
@@ -610,15 +806,192 @@ async fn lookup_stop_id(query: &str) -> anyhow::Result<String> {
 impl ServerHandler for DVBServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().enable_prompts().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_resources()
+                .build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
                 "Dresden public transport assistant with route planning, departure monitoring, \
-                 trip tracking, and station search capabilities. Use the navigation-assistant prompt \
-                 to get started, departure-monitor for real-time departures, or trip-tracker to follow \
-                 a specific trip in real-time.".to_string(),
+                 trip tracking, and station search capabilities.\n\n\
+                 **CONTEXT MANAGEMENT**:\n\
+                 - This server provides RESOURCES for automatic context access\n\
+                 - Available resources: dvb://user/context, dvb://user/location, dvb://user/destination\n\
+                 - Resources are automatically available - no tool call needed!\n\
+                 - For backward compatibility, get_user_context tool is also available\n\
+                 - Use elicit_origin/elicit_destination to save context for future use\n\
+                 - Context persists for the session duration\n\n\
+                 **RECOMMENDED WORKFLOW**:\n\
+                 1. Read dvb://user/context resource to check existing context (automatic!)\n\
+                 2. If context exists, use it directly without asking redundant questions\n\
+                 3. If context missing, ask user and save via elicit_origin/elicit_destination\n\
+                 4. For real-time updates, call tools as needed\n\n\
+                 **RESOURCES**:\n\
+                 - dvb://user/context: Complete user context (location + destination + status)\n\
+                 - dvb://user/location: Current user location (when set)\n\
+                 - dvb://user/destination: Current user destination (when set)\n\n\
+                 **PROMPTS**:\n\
+                 - navigation-assistant: General transit navigation and route planning\n\
+                 - departure-monitor: Real-time departure boards for stations\n\
+                 - trip-tracker: Track specific trips in real-time (requires trip_id from route planning)\n\n\
+                 **TRIP TRACKING NOTE**:\n\
+                 Trip tracking requires a trip_id obtained from get_route_details. Store trip IDs \
+                 in conversation context to provide updates when user asks about their journey.".to_string(),
             ),
             ..Default::default()
         }
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let origin = self.user_origin.lock().await.clone();
+        let location = self.user_location.lock().await.clone();
+        let destination = self.user_destination.lock().await.clone();
+
+        let mut resources = vec![
+            RawResource::new("dvb://user/context", "User Context".to_string()).no_annotation(),
+        ];
+
+        // Add origin resource if set
+        if origin.is_some() {
+            resources.push(
+                RawResource::new("dvb://user/origin", "User Origin".to_string()).no_annotation(),
+            );
+        }
+
+        // Add location resource if set
+        if location.is_some() {
+            resources.push(
+                RawResource::new("dvb://user/location", "User Current Location".to_string())
+                    .no_annotation(),
+            );
+        }
+
+        // Add destination resource if set
+        if destination.is_some() {
+            resources.push(
+                RawResource::new("dvb://user/destination", "User Destination".to_string())
+                    .no_annotation(),
+            );
+        }
+
+        Ok(ListResourcesResult {
+            resources,
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        match uri.as_str() {
+            "dvb://user/context" => {
+                let origin = self.user_origin.lock().await.clone();
+                let location = self.user_location.lock().await.clone();
+                let destination = self.user_destination.lock().await.clone();
+
+                let context = UserContext::new(origin, location, destination);
+
+                Ok(ReadResourceResult {
+                    contents: vec![ResourceContents::text(
+                        serde_json::to_string_pretty(&context).unwrap(),
+                        uri,
+                    )],
+                })
+            }
+            "dvb://user/origin" => {
+                let origin = self.user_origin.lock().await.clone();
+
+                match origin {
+                    Some(org) => {
+                        let data = serde_json::json!({
+                            "origin": org,
+                            "last_updated": chrono::Local::now().to_rfc3339(),
+                        });
+
+                        Ok(ReadResourceResult {
+                            contents: vec![ResourceContents::text(
+                                serde_json::to_string_pretty(&data).unwrap(),
+                                uri,
+                            )],
+                        })
+                    }
+                    None => Err(McpError::resource_not_found(
+                        "Origin not set",
+                        Some(serde_json::json!({ "uri": uri })),
+                    )),
+                }
+            }
+            "dvb://user/location" => {
+                let location = self.user_location.lock().await.clone();
+
+                match location {
+                    Some(loc) => {
+                        let data = serde_json::json!({
+                            "location": loc,
+                            "last_updated": chrono::Local::now().to_rfc3339(),
+                        });
+
+                        Ok(ReadResourceResult {
+                            contents: vec![ResourceContents::text(
+                                serde_json::to_string_pretty(&data).unwrap(),
+                                uri,
+                            )],
+                        })
+                    }
+                    None => Err(McpError::resource_not_found(
+                        "Current location not set",
+                        Some(serde_json::json!({ "uri": uri })),
+                    )),
+                }
+            }
+            "dvb://user/destination" => {
+                let destination = self.user_destination.lock().await.clone();
+
+                match destination {
+                    Some(dest) => {
+                        let data = serde_json::json!({
+                            "destination": dest,
+                            "last_updated": chrono::Local::now().to_rfc3339(),
+                        });
+
+                        Ok(ReadResourceResult {
+                            contents: vec![ResourceContents::text(
+                                serde_json::to_string_pretty(&data).unwrap(),
+                                uri,
+                            )],
+                        })
+                    }
+                    None => Err(McpError::resource_not_found(
+                        "Destination not set",
+                        Some(serde_json::json!({ "uri": uri })),
+                    )),
+                }
+            }
+            _ => Err(McpError::resource_not_found(
+                "Resource not found",
+                Some(serde_json::json!({ "uri": uri })),
+            )),
+        }
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        // Future: Add templates for dvb://station/{id}/departures, etc.
+        Ok(ListResourceTemplatesResult {
+            next_cursor: None,
+            resource_templates: Vec::new(),
+            meta: None,
+        })
     }
 }

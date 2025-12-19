@@ -39,8 +39,24 @@ This server provides the following MCP prompts for Dresden's transit system:
 
 This server provides the following MCP tools for Dresden's transit system:
 
-- `elicit_origin`: Ask the user for their current location (starting point).
+### Context Management
+
+**Interactive Elicitation** (for prompting user):
+- `elicit_origin`: Ask the user for their journey origin/starting point.
+- `elicit_location`: Ask the user for their current location.
 - `elicit_destination`: Ask the user for their desired destination.
+
+**Direct Setting** (when user provides info in conversation):
+- `set_origin`: Set the journey starting point when user says "I'm starting from X".
+- `set_location`: Set current location when user says "I'm at X".
+- `set_destination`: Set destination when user says "I need to go to X".
+
+**Context Retrieval**:
+- `get_user_context`: Get all saved context (origin, location, destination) in one call.
+- `reset_context`: Clear all saved context.
+
+### Transit Operations
+
 - `find_stations`: Search for tram, bus, or train stations by name.
 - `find_nearby_stations`: Find stations near a given location or landmark.
 - `find_pois`: Search for points of interest in Dresden.
@@ -50,6 +66,21 @@ This server provides the following MCP tools for Dresden's transit system:
 - `get_route_details`: Query possible routes between two stops.
 - `lookup_stop_id_tool`: Look up the stop ID for a given station name.
 - `osm_link`: Get an OpenStreetMap link for given coordinates.
+- `now`: Get the current local time in ISO8601 format.
+
+### User Context Concepts
+
+The server maintains three distinct user context fields:
+
+- **Origin**: Where the user's journey *starts* (set at trip planning time)
+- **Location**: Where the user *currently is* (can change during journey)
+- **Destination**: Where the user *wants to go*
+
+**Example Usage**:
+1. User: "I'm at Hauptbahnhof and need to get to Altmarkt"
+   - Agent calls: `set_location("Hauptbahnhof")` and `set_destination("Altmarkt")`
+2. User: "Where am I starting from?"
+   - Agent calls: `elicit_origin()` to ask interactively
 
 ## Usage with Claude Desktop
 
