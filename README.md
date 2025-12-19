@@ -27,6 +27,22 @@ The server can be configured using environment variables:
 RUST_LOG=info
 ```
 
+## MCP Resources
+
+This server provides MCP resources for automatic context access:
+
+### Static Resources
+- `dvb://user/context`: Complete user context (origin, location, destination)
+- `dvb://user/location`: Current user location (when set)
+- `dvb://user/destination`: User destination (when set)
+
+### Resource Templates
+- `dvb://departures/{stop_id}`: Real-time departure information for a specific stop
+
+**Benefits**: Resources are automatically available to AI assistants without requiring explicit tool calls, providing faster context access and more natural conversations.
+
+See `RESOURCES_IMPLEMENTED.md` for detailed documentation.
+
 ## MCP Prompts
 
 This server provides the following MCP prompts for Dresden's transit system:
@@ -118,6 +134,24 @@ Ask Claude to use the `departure-monitor` prompt for quick departure information
 ```
 
 The departure monitor provides fast, focused answers about upcoming departures without requiring full journey planning.
+
+### Using Resources
+
+The server automatically provides context through MCP resources. For example:
+
+```
+"How do I get to Hauptbahnhof?"
+```
+
+Claude will automatically read your saved location from `dvb://user/context` and plan the route without asking where you are.
+
+To access real-time departures via resources:
+
+```
+"Show me departures for stop 33000001"
+```
+
+Claude can read the `dvb://departures/33000001` resource directly for instant departure information.
 
 ## Development
 

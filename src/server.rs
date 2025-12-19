@@ -975,10 +975,49 @@ impl ServerHandler for DVBServer {
                     )),
                 }
             }
-            _ => Err(McpError::resource_not_found(
-                "Resource not found",
-                Some(serde_json::json!({ "uri": uri })),
-            )),
+            _ => {
+                // Check if it's a departures resource with pattern dvb://departures/{stop_id}
+                if uri.starts_with("dvb://departures/") {
+                    let stop_id = uri.strip_prefix("dvb://departures/").unwrap();
+
+                    // Fetch departures using dvb crate
+                    let monitor_params = dvb::monitor::Params {
+                        stopid: stop_id,
+                        mot: None,
+                        limit: Some(10),
+                        ..Default::default()
+                    };
+
+                    match dvb::monitor::departure_monitor(monitor_params).await {
+                        Ok(departures) => {
+                            let data = serde_json::json!({
+                                "stop_id": stop_id,
+                                "departures": departures,
+                                "last_updated": chrono::Local::now().to_rfc3339(),
+                            });
+
+                            Ok(ReadResourceResult {
+                                contents: vec![ResourceContents::text(
+                                    serde_json::to_string_pretty(&data).unwrap(),
+                                    uri,
+                                )],
+                            })
+                        }
+                        Err(error) => Err(McpError::resource_not_found(
+                            format!(
+                                "Failed to fetch departures for stop_id {}: {}",
+                                stop_id, error
+                            ),
+                            Some(serde_json::json!({ "uri": uri, "stop_id": stop_id })),
+                        )),
+                    }
+                } else {
+                    Err(McpError::resource_not_found(
+                        "Resource not found",
+                        Some(serde_json::json!({ "uri": uri })),
+                    ))
+                }
+            }
         }
     }
 
@@ -987,10 +1026,19 @@ impl ServerHandler for DVBServer {
         _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        // Future: Add templates for dvb://station/{id}/departures, etc.
+        let templates = vec![
+            RawResourceTemplate {
+                uri_template: "dvb://departures/{stop_id}".to_string(),
+                name: "Station Departures".to_string(),
+                title: Some("Real-time Departures".to_string()),
+                description: Some("Real-time departure information for a specific stop. Use the stop_id from find_stations or lookup_stop_id.".to_string()),
+                mime_type: Some("application/json".to_string()),
+            }.no_annotation(),
+        ];
+
         Ok(ListResourceTemplatesResult {
             next_cursor: None,
-            resource_templates: Vec::new(),
+            resource_templates: templates,
             meta: None,
         })
     }
