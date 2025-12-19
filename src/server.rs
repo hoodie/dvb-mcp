@@ -174,6 +174,39 @@ impl DVBServer {
             ),
         ]
     }
+
+    /// Real-time departure monitor for Dresden public transport stops
+    #[prompt(
+        name = "departure-monitor",
+        description = "Real-time departure board for checking when the next vehicles are leaving from a specific station"
+    )]
+    async fn departure_monitor(&self) -> Vec<PromptMessage> {
+        vec![
+            PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                "You are a real-time departure monitor assistant for Dresden's public transportation system (DVB). \
+                 Your primary focus is to quickly provide departure information from specific stations. \
+                 When a user asks about departures, use find_stations to locate the stop, then use monitor_departures to show real-time information. \
+                 Always present departures as a Markdown table with columns: Line, Destination, Departure (in min/time), Platform/Bay, and Delay/Status if available. \
+                 Highlight any delays or disruptions. Be concise and fast—users at a stop need quick answers. \
+                 If the user doesn't specify a station, ask them which stop they're interested in.",
+            ),
+            PromptMessage::new_text(
+                PromptMessageRole::User,
+                "When is the next tram from Postplatz?",
+            ),
+            PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                "Let me check the real-time departures at Postplatz for you. Here are the next trams:\n\n\
+| Line | Destination | Departure | Platform | Status |\n\
+|------|-------------|-----------|----------|--------|\n\
+| 1    | Prohlis     | 2 min     | 2        | On time |\n\
+| 2    | Gorbitz     | 5 min     | 1        | +3 min delay |\n\
+| 4    | Weinböhla   | 7 min     | 3        | On time |\n\n\
+If you want to see departures for a different line or direction, just let me know!",
+            ),
+        ]
+    }
 }
 
 #[tool_router]
