@@ -75,7 +75,7 @@ mod args {
     #[derive(Debug, Serialize, Deserialize, JsonSchema)]
     pub struct MonitorDeparturesRequest {
         /// Partial or full stop name to search for
-        pub stop_name: String,
+        pub stop_name: Option<String>,
         /// The ID of a point. Can be found via `lookup_point` function.
         pub stop_id: String,
         /// Optional list of modes of transport (e.g., ["Tram", "Bus"])
@@ -765,7 +765,7 @@ impl DVBServer {
     #[tool(
         description = "Look up the stop ID for a given stop name or query string in Dresden. Returns the stop ID if found."
     )]
-    async fn lookup_stop_id_tool(
+    async fn lookup_stop_id(
         &self,
         Parameters(args::FindStationRequest { rough_stop_name }): Parameters<
             args::FindStationRequest,
