@@ -1,97 +1,109 @@
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, FixedOffset};
 use rmcp::{
-    ErrorData as McpError, ServerHandler, elicit_safe,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    ErrorData as McpError, ServerHandler,
+    handler::server::{
+        router::{prompt::PromptRouter, tool::ToolRouter},
+        wrapper::Parameters,
+    },
     model::*,
-    schemars::JsonSchema,
-    serde_json,
+    prompt, prompt_handler, prompt_router, serde_json,
     service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use dvb::{find_stops, point::Point};
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "User information")]
-pub struct OriginInfo {
-    #[schemars(description = "User's origin")]
-    pub location: String,
+mod args {
+    //! Argument types for MCP tools
+
+    use chrono::{DateTime, FixedOffset};
+    use rmcp::{elicit_safe, schemars::JsonSchema};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    #[schemars(description = "User information")]
+    pub struct OriginInfo {
+        #[schemars(description = "User's origin")]
+        pub location: String,
+    }
+    // Mark as safe for elicitation
+    elicit_safe!(OriginInfo);
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    #[schemars(description = "User destination information")]
+    pub struct DestinationInfo {
+        #[schemars(description = "User's destination")]
+        pub destination: String,
+    }
+    // Mark as safe for elicitation
+    elicit_safe!(DestinationInfo);
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct LinesRequest {
+        // pub start_query: Option<String>,
+        /// The ID of a point. Can be found via `lookup_point` function.
+        pub point_id: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct FindStationRequest {
+        pub rough_stop_name: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct FindNearbyStationRequest {
+        pub rough_stop_name: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct FindPoiRequest {
+        /// Partial or full name of the point of interest to search for
+        pub rough_poi_name: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct MonitorDeparturesRequest {
+        /// Partial or full stop name to search for
+        pub stop_name: String,
+        /// The ID of a point. Can be found via `lookup_point` function.
+        pub stop_id: String,
+        /// Optional list of modes of transport (e.g., ["Tram", "Bus"])
+        pub mot: Option<Vec<String>>,
+        /// Optional limit for number of departures
+        pub limit: Option<u32>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct TripDetailsRequest {
+        pub trip_id: String,
+        pub time: DateTime<FixedOffset>,
+        /// The ID of a point. Can be found via `lookup_point` function.
+        pub stop_id: String,
+        pub mapdata: Option<bool>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct RouteRequest {
+        pub origin: String,
+        pub destination: String,
+        pub time: DateTime<chrono::Local>,
+        pub isarrivaltime: Option<bool>,
+        pub shorttermchanges: Option<bool>,
+        pub format: Option<String>,
+        pub via: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct OsmLinkRequest {
+        pub latitude: f64,
+        pub longitude: f64,
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "User destination information")]
-pub struct DestinationInfo {
-    #[schemars(description = "User's destination")]
-    pub destination: String,
-}
-
-// Mark as safe for elicitation
-elicit_safe!(OriginInfo);
-elicit_safe!(DestinationInfo);
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct LinesRequest {
-    // pub start_query: Option<String>,
-    /// The ID of a point. Can be found via `lookup_point` function.
-    pub point_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct FindStationRequest {
-    pub rough_stop_name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct FindNearbyStationRequest {
-    pub rough_stop_name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct FindPoiRequest {
-    /// Partial or full name of the point of interest to search for
-    pub rough_poi_name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct MonitorDeparturesRequest {
-    /// Partial or full stop name to search for
-    pub stop_name: String,
-    /// The ID of a point. Can be found via `lookup_point` function.
-    pub stop_id: String,
-    /// Optional list of modes of transport (e.g., ["Tram", "Bus"])
-    pub mot: Option<Vec<String>>,
-    /// Optional limit for number of departures
-    pub limit: Option<u32>,
-}
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct TripDetailsRequest {
-    pub trip_id: String,
-    pub time: DateTime<FixedOffset>,
-    /// The ID of a point. Can be found via `lookup_point` function.
-    pub stop_id: String,
-    pub mapdata: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct RouteRequest {
-    pub origin: String,
-    pub destination: String,
-    pub time: DateTime<chrono::Local>,
-    pub isarrivaltime: Option<bool>,
-    pub shorttermchanges: Option<bool>,
-    pub format: Option<String>,
-    pub via: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct OsmLinkRequest {
-    pub latitude: f64,
-    pub longitude: f64,
-}
+use rmcp::schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OsmLinkResponse {
@@ -105,28 +117,16 @@ pub struct DVBServer {
     user_destination: Arc<Mutex<Option<String>>>,
 
     tool_router: ToolRouter<DVBServer>,
-    prompts: Vec<Prompt>,
+    prompt_router: PromptRouter<DVBServer>,
 }
 
 impl Default for DVBServer {
     fn default() -> Self {
-        let prompts = vec![
-            Prompt::new(
-                "greeting",
-                Some("A simple greeting prompt for Dresden transit assistant"),
-                None,
-            ),
-            Prompt::new(
-                "transit_workflow",
-                Some("Guide the agent through the steps for planning a trip"),
-                None,
-            ),
-        ];
         Self {
             user_location: Arc::new(Mutex::new(None)),
             user_destination: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
-            prompts,
+            prompt_router: Self::prompt_router(),
         }
     }
 }
@@ -143,6 +143,39 @@ fn error_text<S: Into<String>>(text: S) -> CallToolResult {
     CallToolResult::error(vec![Content::text(text.into())])
 }
 
+#[prompt_router]
+impl DVBServer {
+    /// Dresden public transport navigation assistant
+    #[prompt(
+        name = "navigation-assistant",
+        description = "Interactive assistant for navigating Dresden's public transportation system"
+    )]
+    async fn navigation_assistant(&self) -> Vec<PromptMessage> {
+        vec![
+            PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                "You are a travel assistant for Dresden's public transportation system (DVB). \
+                 You have access to tools from the local public transportation provider. \
+                 You can help users navigate the city by finding stations, checking departure times, \
+                 and planning routes. Use the available tools to provide a pleasant experience. \
+                 When asked for navigation assistance, first determine the user's origin and destination, \
+                 then use the route planning tools to find the best connections.",
+            ),
+            PromptMessage::new_text(
+                PromptMessageRole::User,
+                "I need help getting around Dresden using public transport.",
+            ),
+            PromptMessage::new_text(
+                PromptMessageRole::Assistant,
+                "I'd be happy to help you navigate Dresden's public transportation! \
+                 To get started, I'll need to know where you are and where you'd like to go. \
+                 I can help you find nearby stations, check departure times, and plan your route. \
+                 What's your journey today?",
+            ),
+        ]
+    }
+}
+
 #[tool_router]
 impl DVBServer {
     #[tool(
@@ -157,7 +190,7 @@ impl DVBServer {
         } else {
             match context
                 .peer
-                .elicit::<OriginInfo>("Please provide you are starting from".to_string())
+                .elicit::<args::OriginInfo>("Please provide you are starting from".to_string())
                 .await
             {
                 Ok(Some(user_info)) => {
@@ -186,7 +219,7 @@ impl DVBServer {
             } else {
                 match context
                     .peer
-                    .elicit::<DestinationInfo>("Please provide where you want to go.".to_string())
+                    .elicit::<args::DestinationInfo>("Please provide where you want to go.".to_string())
                     .await
                 {
                     Ok(Some(dest_info)) => {
@@ -211,10 +244,10 @@ impl DVBServer {
     #[tool(description = "Returns a link to OpenStreetMap for the given coordinates.")]
     fn osm_link(
         &self,
-        Parameters(OsmLinkRequest {
+        Parameters(args::OsmLinkRequest {
             latitude,
             longitude,
-        }): Parameters<OsmLinkRequest>,
+        }): Parameters<args::OsmLinkRequest>,
     ) -> Result<CallToolResult, McpError> {
         // Basic validation
         if !((-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)) {
@@ -242,7 +275,7 @@ impl DVBServer {
     )]
     async fn find_stations(
         &self,
-        Parameters(FindStationRequest { rough_stop_name }): Parameters<FindStationRequest>,
+        Parameters(args::FindStationRequest { rough_stop_name }): Parameters<args::FindStationRequest>,
     ) -> Result<CallToolResult, McpError> {
         let found = match dvb::find_stops(&rough_stop_name).await {
             Ok(found) => found,
@@ -261,8 +294,8 @@ impl DVBServer {
     )]
     async fn find_nearby_stations(
         &self,
-        Parameters(FindNearbyStationRequest { rough_stop_name }): Parameters<
-            FindNearbyStationRequest,
+        Parameters(args::FindNearbyStationRequest { rough_stop_name }): Parameters<
+            args::FindNearbyStationRequest,
         >,
     ) -> Result<CallToolResult, McpError> {
         let found = match dvb::find_nearby_stops(&rough_stop_name).await {
@@ -283,7 +316,7 @@ impl DVBServer {
     )]
     async fn find_pois(
         &self,
-        Parameters(FindPoiRequest { rough_poi_name }): Parameters<FindPoiRequest>,
+        Parameters(args::FindPoiRequest { rough_poi_name }): Parameters<args::FindPoiRequest>,
     ) -> Result<CallToolResult, McpError> {
         let found = match dvb::find_pois(&rough_poi_name).await {
             Ok(found) => found,
@@ -301,12 +334,12 @@ impl DVBServer {
     )]
     async fn monitor_departures(
         &self,
-        Parameters(MonitorDeparturesRequest {
+        Parameters(args::MonitorDeparturesRequest {
             stop_name,
             stop_id,
             mot,
             limit,
-        }): Parameters<MonitorDeparturesRequest>,
+        }): Parameters<args::MonitorDeparturesRequest>,
     ) -> Result<CallToolResult, McpError> {
         // Parse Mot if provided
         let mot_filter = mot.as_ref().map(|mot_list| {
@@ -345,7 +378,7 @@ impl DVBServer {
     )]
     async fn list_lines(
         &self,
-        Parameters(LinesRequest { point_id }): Parameters<LinesRequest>,
+        Parameters(args::LinesRequest { point_id }): Parameters<args::LinesRequest>,
     ) -> Result<CallToolResult, McpError> {
         let start_point_id = if let Some(point_id) = point_id {
             point_id
@@ -367,12 +400,12 @@ impl DVBServer {
     )]
     async fn get_trip_details(
         &self,
-        Parameters(TripDetailsRequest {
+        Parameters(args::TripDetailsRequest {
             trip_id,
             time,
             stop_id,
             mapdata,
-        }): Parameters<TripDetailsRequest>,
+        }): Parameters<args::TripDetailsRequest>,
     ) -> Result<CallToolResult, McpError> {
         let dvb_time = dvb::DvbTime::from(time);
 
@@ -396,7 +429,7 @@ impl DVBServer {
     )]
     async fn get_route_details(
         &self,
-        Parameters(RouteRequest {
+        Parameters(args::RouteRequest {
             origin,
             destination,
             time,
@@ -404,7 +437,7 @@ impl DVBServer {
             shorttermchanges,
             format,
             via,
-        }): Parameters<RouteRequest>,
+        }): Parameters<args::RouteRequest>,
     ) -> Result<CallToolResult, McpError> {
         let dvb_time = dvb::DvbTime::from(time);
 
@@ -451,7 +484,7 @@ impl DVBServer {
     )]
     async fn lookup_stop_id_tool(
         &self,
-        Parameters(FindStationRequest { rough_stop_name }): Parameters<FindStationRequest>,
+        Parameters(args::FindStationRequest { rough_stop_name }): Parameters<args::FindStationRequest>,
     ) -> Result<CallToolResult, McpError> {
         let found = match dvb::find_stops(&rough_stop_name).await {
             Ok(found) => found,
@@ -484,70 +517,17 @@ async fn lookup_stop_id(query: &str) -> anyhow::Result<String> {
 }
 
 #[tool_handler]
+#[prompt_handler]
 impl ServerHandler for DVBServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             capabilities: ServerCapabilities::builder().enable_tools().enable_prompts().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "Simple server demonstrating elicitation for user name collection and agent prompt support for Dresden public transport.".to_string(),
+                "Dresden public transport assistant with route planning, departure monitoring, \
+                 and station search capabilities. Use the navigation-assistant prompt to get started.".to_string(),
             ),
             ..Default::default()
         }
     }
-
-    fn get_prompt(
-        &self,
-        request: GetPromptRequestParam,
-        _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<rmcp::model::GetPromptResult, ErrorData>> + Send {
-        let name = request.name.clone();
-        async move {
-            match name.as_str() {
-                "greeting" => Ok(GetPromptResult {
-                    description: Some(
-                        "A simple greeting prompt for Dresden transit assistant".to_string(),
-                    ),
-                    messages: vec![
-                        PromptMessage::new_text(
-                            PromptMessageRole::User,
-                            "Hello! How can I help you with Dresden public transport today?",
-                        ),
-                        PromptMessage::new_text(
-                            PromptMessageRole::Assistant,
-                            "Hi! I can help you find routes, departure times, and station info in Dresden. Where would you like to go?",
-                        ),
-                    ],
-                }),
-                "transit_workflow" => Ok(GetPromptResult {
-                    description: Some(
-                        "Guide the agent through the steps for planning a trip".to_string(),
-                    ),
-                    messages: vec![PromptMessage::new_text(
-                        PromptMessageRole::Assistant,
-                        "To plan your trip, I will first find the stop IDs for your origin and destination, then query possible routes, and finally present the best options with times and changes.",
-                    )],
-                }),
-                _ => Err(McpError::invalid_params(
-                    format!("Prompt '{}' not found", name),
-                    None,
-                )),
-            }
-        }
-    }
-
-    // fn list_prompts(
-    //     &self,
-    //     _request: Option<PaginatedRequestParam>,
-    //     _context: RequestContext<RoleServer>,
-    // ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + Send {
-    //     let prompts = self.prompts.clone();
-    //     async {
-    //         Ok(ListPromptsResult {
-    //             next_cursor: None,
-    //             prompts,
-    //             meta: None,
-    //         })
-    //     }
-    // }
 }
