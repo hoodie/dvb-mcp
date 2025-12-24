@@ -13,6 +13,7 @@ use rmcp::{
 use tokio::sync::Mutex;
 
 use dvb::{find_stops, point::Point};
+use proj::Proj;
 use std::sync::Arc;
 
 mod args {
@@ -250,6 +251,59 @@ fn success_json<T: serde::Serialize>(data: &T) -> CallToolResult {
 
 fn error_text<S: Into<String>>(text: S) -> CallToolResult {
     CallToolResult::error(vec![Content::text(text.into())])
+}
+
+/// Convert DVB projected coordinates to WGS84 latitude/longitude
+///
+/// DVB uses EPSG:31468 (DHDN / Gauss-Krüger zone 4) projection.
+/// The coords tuple appears to be (northing, easting) based on observed values.
+///
+/// Returns: (latitude, longitude) in WGS84 decimal degrees
+fn dvb_coords_to_wgs84(coords: (i64, i64)) -> Result<(f64, f64), String> {
+    // DVB coords appear to be (northing, easting) in EPSG:31468 (Gauss-Krüger Zone 4)
+    let (northing, easting) = coords;
+
+    // Create projection from EPSG:31468 (Gauss-Krüger Zone 4) to EPSG:4326 (WGS84)
+    let proj = Proj::new_known_crs("EPSG:31468", "EPSG:4326", None)
+        .map_err(|e| format!("Failed to create projection: {}", e))?;
+
+    // Convert to f64 and transform
+    // proj expects (x, y) which in UTM is (easting, northing)
+    let result = proj
+        .convert((easting as f64, northing as f64))
+        .map_err(|e| format!("Failed to transform coordinates: {}", e))?;
+
+    // Result is (longitude, latitude) in WGS84
+    let (longitude, latitude) = result;
+
+    // Validate the result is reasonable for Dresden area
+    if !(50.0..=52.0).contains(&latitude) || !(13.0..=15.0).contains(&longitude) {
+        return Err(format!(
+            "Converted coordinates ({}, {}) are outside Dresden area",
+            latitude, longitude
+        ));
+    }
+
+    Ok((latitude, longitude))
+}
+
+impl DVBServer {}
+
+fn osm_link(
+    args::OsmLinkRequest {
+        latitude,
+        longitude,
+    }: args::OsmLinkRequest,
+) -> Result<String, &'static str> {
+    // Basic validation
+    if !((-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)) {
+        return Err("Invalid latitude or longitude");
+    }
+    let link = format!(
+        "https://www.openstreetmap.org/?mlat={}&mlon={}&zoom=17",
+        latitude, longitude
+    );
+    Ok(link)
 }
 
 #[prompt_router]
@@ -523,20 +577,53 @@ impl DVBServer {
     #[tool(description = "Returns a link to OpenStreetMap for the given coordinates.")]
     fn osm_link(
         &self,
-        Parameters(args::OsmLinkRequest {
-            latitude,
-            longitude,
-        }): Parameters<args::OsmLinkRequest>,
+        Parameters(request): Parameters<args::OsmLinkRequest>,
     ) -> Result<CallToolResult, McpError> {
-        // Basic validation
-        if !((-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)) {
-            return Ok(error_text("Invalid latitude or longitude"));
+        match osm_link(request) {
+            Ok(link) => Ok(success_json(&OsmLinkResponse { link })),
+            Err(msg) => Ok(error_text(msg)),
         }
-        let link = format!(
-            "https://www.openstreetmap.org/?mlat={}&mlon={}&zoom=17",
-            latitude, longitude
-        );
-        Ok(success_json(&OsmLinkResponse { link }))
+    }
+
+    /// Search for POIs by name using the VVO PointFinder API and return links to OpenStreetMap.
+    #[tool(description = "Search for POIs by name and get OpenStreetMap links.")]
+    async fn osm_links_from_query(
+        &self,
+        Parameters(args::FindPoiRequest { rough_poi_name }): Parameters<args::FindPoiRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let points = match dvb::find_pois(&rough_poi_name).await {
+            Ok(response) => response.into_inner().points,
+            Err(error) => {
+                return Ok(error_text(format!(
+                    "failed to find POI {rough_poi_name:?}: {error}"
+                )));
+            }
+        };
+
+        let mut results = Vec::new();
+        for point in points {
+            // Convert DVB coordinates to WGS84
+            let (latitude, longitude) = match dvb_coords_to_wgs84(point.coords) {
+                Ok(coords) => coords,
+                Err(e) => {
+                    results.push(format!("{}: Error converting coordinates: {}", point.name, e));
+                    continue;
+                }
+            };
+
+            // Generate OSM link
+            match osm_link(args::OsmLinkRequest {
+                latitude,
+                longitude,
+            }) {
+                Ok(link) => results.push(format!("{}: {}", point.name, link)),
+                Err(e) => results.push(format!("{}: Error: {}", point.name, e)),
+            }
+        }
+
+        Ok(success_json(&serde_json::json!({
+            "results": results
+        })))
     }
 
     #[tool(
@@ -1041,5 +1128,34 @@ impl ServerHandler for DVBServer {
             resource_templates: templates,
             meta: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dvb_coords_conversion() {
+        // Dresden Hauptbahnhof coords from DVB: (5657516, 4621644)
+        // Expected WGS84: approximately 51.040° N, 13.732° E
+        let coords = (5657516, 4621644);
+        let result = dvb_coords_to_wgs84(coords);
+
+        if let Err(e) = &result {
+            eprintln!("Conversion error: {}", e);
+        }
+        assert!(result.is_ok(), "Conversion should succeed: {:?}", result);
+        let (lat, lon) = result.unwrap();
+
+        println!("Converted coords: lat={:.6}, lon={:.6}", lat, lon);
+
+        // Check it's in the Dresden area
+        assert!((50.0..=52.0).contains(&lat), "Latitude should be in Dresden area");
+        assert!((13.0..=15.0).contains(&lon), "Longitude should be in Dresden area");
+
+        // More specific check for Hauptbahnhof area
+        assert!((51.03..=51.05).contains(&lat), "Should be near Dresden Hbf latitude");
+        assert!((13.72..=13.74).contains(&lon), "Should be near Dresden Hbf longitude");
     }
 }
