@@ -1,5 +1,12 @@
 # Changelog
 
+### [v0.1.1](https://github.com/hoodie/dvb-mcp/compare/v0.1.0...v0.1.1) (2025-12-25)
+
+#### Fixes
+
+* use correct repo url
+([b5f4977](https://github.com/hoodie/dvb-mcp/commit/b5f497708fda77e484bb86a365bb3d20cb279855))
+
 ## v0.1.0 (2025-12-25)
 
 ### Features
