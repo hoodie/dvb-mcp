@@ -1,221 +1,33 @@
 use anyhow::{Result, anyhow};
 use rmcp::{
-    ErrorData as McpError, ServerHandler,
+    ErrorData as McpError,
     handler::server::{
         router::{prompt::PromptRouter, tool::ToolRouter},
         wrapper::Parameters,
     },
     model::*,
-    prompt, prompt_handler, prompt_router, serde_json,
+    prompt, prompt_router, serde_json,
     service::{RequestContext, RoleServer},
-    tool, tool_handler, tool_router,
+    tool, tool_router,
 };
 use tokio::sync::Mutex;
 
 use dvb::{find_stops, point::Point};
-use proj::Proj;
 use std::sync::Arc;
-
-mod args {
-    //! Argument types for MCP tools
-
-    use chrono::{DateTime, FixedOffset};
-    use rmcp::{elicit_safe, schemars::JsonSchema};
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    #[schemars(description = "User origin (journey starting point) information")]
-    pub struct OriginInfo {
-        #[schemars(description = "User's journey origin/starting point")]
-        pub origin: String,
-    }
-    // Mark as safe for elicitation
-    elicit_safe!(OriginInfo);
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    #[schemars(description = "User current location information")]
-    pub struct LocationInfo {
-        #[schemars(description = "User's current location")]
-        pub location: String,
-    }
-    // Mark as safe for elicitation
-    elicit_safe!(LocationInfo);
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    #[schemars(description = "User destination information")]
-    pub struct DestinationInfo {
-        #[schemars(description = "User's destination")]
-        pub destination: String,
-    }
-    // Mark as safe for elicitation
-    elicit_safe!(DestinationInfo);
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct LinesRequest {
-        // pub start_query: Option<String>,
-        /// The ID of a point. Can be found via `lookup_point` function.
-        pub point_id: Option<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct FindStationRequest {
-        pub rough_stop_name: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct FindNearbyStationRequest {
-        pub rough_stop_name: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct FindPoiRequest {
-        /// Partial or full name of the point of interest to search for
-        pub rough_poi_name: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct MonitorDeparturesRequest {
-        /// Partial or full stop name to search for
-        pub stop_name: Option<String>,
-        /// The ID of a point. Can be found via `lookup_point` function.
-        pub stop_id: String,
-        /// Optional list of modes of transport (e.g., ["Tram", "Bus"])
-        pub mot: Option<Vec<String>>,
-        /// Optional limit for number of departures
-        pub limit: Option<u32>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct TripDetailsRequest {
-        pub trip_id: String,
-        pub time: DateTime<FixedOffset>,
-        /// The ID of a point. Can be found via `lookup_point` function.
-        pub stop_id: String,
-        pub mapdata: Option<bool>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct RouteRequest {
-        pub origin: String,
-        pub destination: String,
-        pub time: DateTime<chrono::Local>,
-        pub isarrivaltime: Option<bool>,
-        pub shorttermchanges: Option<bool>,
-        pub format: Option<String>,
-        pub via: Option<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct OsmLinkRequest {
-        pub latitude: f64,
-        pub longitude: f64,
-    }
-}
 
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+mod args;
+mod osm_links;
+mod server_handle;
+mod usercontext;
+
+use crate::server::{args::DVBPointCoords, osm_links::OsmCoords, usercontext::UserContext};
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OsmLinkResponse {
     pub link: String,
-}
-
-/// Status of user context completeness
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum UserContextStatus {
-    /// All three fields (origin, location, destination) are set
-    Complete,
-    /// At least one field is set, but not all
-    Partial,
-    /// No fields are set
-    Empty,
-}
-
-/// User context containing origin, current location, and destination
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct UserContext {
-    /// Where the user's journey starts
-    pub origin: Option<String>,
-    /// Where the user currently is
-    pub location: Option<String>,
-    /// Where the user wants to go
-    pub destination: Option<String>,
-    /// Last time context was updated
-    pub last_updated: String,
-    /// Whether any context is available
-    pub context_available: bool,
-    /// Status of context completeness
-    pub status: UserContextStatus,
-    /// Human-readable description of the context
-    pub message: String,
-}
-
-impl UserContext {
-    /// Create a new UserContext from the given values
-    pub fn new(
-        origin: Option<String>,
-        location: Option<String>,
-        destination: Option<String>,
-    ) -> Self {
-        let any_set = origin.is_some() || location.is_some() || destination.is_some();
-        let all_set = origin.is_some() && location.is_some() && destination.is_some();
-
-        let status = if all_set {
-            UserContextStatus::Complete
-        } else if any_set {
-            UserContextStatus::Partial
-        } else {
-            UserContextStatus::Empty
-        };
-
-        let message = match (&origin, &location, &destination) {
-            (Some(org), Some(loc), Some(dest)) => {
-                format!(
-                    "User journey: Origin: {}, Current location: {}, Destination: {}",
-                    org, loc, dest
-                )
-            }
-            (Some(org), Some(loc), None) => {
-                format!(
-                    "User origin: {}, Current location: {} (destination not set)",
-                    org, loc
-                )
-            }
-            (Some(org), None, Some(dest)) => {
-                format!(
-                    "User origin: {}, Destination: {} (current location not set)",
-                    org, dest
-                )
-            }
-            (None, Some(loc), Some(dest)) => {
-                format!(
-                    "Current location: {}, Destination: {} (origin not set)",
-                    loc, dest
-                )
-            }
-            (Some(org), None, None) => {
-                format!("User origin: {} (location and destination not set)", org)
-            }
-            (None, Some(loc), None) => {
-                format!("Current location: {} (origin and destination not set)", loc)
-            }
-            (None, None, Some(dest)) => {
-                format!("Destination: {} (origin and location not set)", dest)
-            }
-            (None, None, None) => "No user context saved yet".to_string(),
-        };
-
-        Self {
-            origin,
-            location,
-            destination,
-            last_updated: chrono::Local::now().to_rfc3339(),
-            context_available: any_set,
-            status,
-            message,
-        }
-    }
 }
 
 /// Simple server with elicitation
@@ -253,57 +65,13 @@ fn error_text<S: Into<String>>(text: S) -> CallToolResult {
     CallToolResult::error(vec![Content::text(text.into())])
 }
 
-/// Convert DVB projected coordinates to WGS84 latitude/longitude
-///
-/// DVB uses EPSG:31468 (DHDN / Gauss-Krüger zone 4) projection.
-/// The coords tuple appears to be (northing, easting) based on observed values.
-///
-/// Returns: (latitude, longitude) in WGS84 decimal degrees
-fn dvb_coords_to_wgs84(coords: (i64, i64)) -> Result<(f64, f64), String> {
-    // DVB coords appear to be (northing, easting) in EPSG:31468 (Gauss-Krüger Zone 4)
-    let (northing, easting) = coords;
-
-    // Create projection from EPSG:31468 (Gauss-Krüger Zone 4) to EPSG:4326 (WGS84)
-    let proj = Proj::new_known_crs("EPSG:31468", "EPSG:4326", None)
-        .map_err(|e| format!("Failed to create projection: {}", e))?;
-
-    // Convert to f64 and transform
-    // proj expects (x, y) which in UTM is (easting, northing)
-    let result = proj
-        .convert((easting as f64, northing as f64))
-        .map_err(|e| format!("Failed to transform coordinates: {}", e))?;
-
-    // Result is (longitude, latitude) in WGS84
-    let (longitude, latitude) = result;
-
-    // Validate the result is reasonable for Dresden area
-    if !(50.0..=52.0).contains(&latitude) || !(13.0..=15.0).contains(&longitude) {
-        return Err(format!(
-            "Converted coordinates ({}, {}) are outside Dresden area",
-            latitude, longitude
-        ));
-    }
-
-    Ok((latitude, longitude))
-}
-
-impl DVBServer {}
-
-fn osm_link(
-    args::OsmLinkRequest {
-        latitude,
-        longitude,
-    }: args::OsmLinkRequest,
-) -> Result<String, &'static str> {
-    // Basic validation
-    if !((-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)) {
-        return Err("Invalid latitude or longitude");
-    }
-    let link = format!(
-        "https://www.openstreetmap.org/?mlat={}&mlon={}&zoom=17",
-        latitude, longitude
-    );
-    Ok(link)
+async fn lookup_stop_id(query: &str) -> anyhow::Result<String> {
+    let found_origin = find_stops(query).await?;
+    let Point { id, .. } = found_origin
+        .points
+        .first()
+        .ok_or_else(|| anyhow!("empty response"))?;
+    Ok(id.to_owned())
 }
 
 #[prompt_router]
@@ -577,11 +345,11 @@ impl DVBServer {
     #[tool(description = "Returns a link to OpenStreetMap for the given coordinates.")]
     fn osm_link(
         &self,
-        Parameters(request): Parameters<args::OsmLinkRequest>,
+        Parameters(dvb_coords): Parameters<DVBPointCoords>,
     ) -> Result<CallToolResult, McpError> {
-        match osm_link(request) {
-            Ok(link) => Ok(success_json(&OsmLinkResponse { link })),
-            Err(msg) => Ok(error_text(msg)),
+        match OsmCoords::try_from(dvb_coords) {
+            Ok(osm) => Ok(success_json(&OsmLinkResponse { link: osm.url() })),
+            Err(msg) => Ok(error_text(msg.to_string())),
         }
     }
 
@@ -600,25 +368,17 @@ impl DVBServer {
             }
         };
 
-        let mut results = Vec::new();
+        let mut results: Vec<String> = Vec::new();
         for point in points {
-            // Convert DVB coordinates to WGS84
-            let (latitude, longitude) = match dvb_coords_to_wgs84(point.coords) {
-                Ok(coords) => coords,
-                Err(e) => {
-                    results.push(format!("{}: Error converting coordinates: {}", point.name, e));
+            let request = match OsmCoords::try_from(point.clone()) {
+                Ok(request) => request,
+                Err(error) => {
+                    results.push(error.to_string());
                     continue;
                 }
             };
 
-            // Generate OSM link
-            match osm_link(args::OsmLinkRequest {
-                latitude,
-                longitude,
-            }) {
-                Ok(link) => results.push(format!("{}: {}", point.name, link)),
-                Err(e) => results.push(format!("{}: Error: {}", point.name, e)),
-            }
+            results.push(request.url())
         }
 
         Ok(success_json(&serde_json::json!({
@@ -876,286 +636,5 @@ impl DVBServer {
         };
 
         Ok(success_json(&serde_json::json!({ "stop_id": stop.id })))
-    }
-}
-
-async fn lookup_stop_id(query: &str) -> anyhow::Result<String> {
-    let found_origin = find_stops(query).await?;
-    let Point { id, .. } = found_origin
-        .points
-        .first()
-        .ok_or_else(|| anyhow!("empty response"))?;
-    Ok(id.to_owned())
-}
-
-#[tool_handler]
-#[prompt_handler]
-impl ServerHandler for DVBServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .enable_prompts()
-                .enable_resources()
-                .build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
-                "Dresden public transport assistant with route planning, departure monitoring, \
-                 trip tracking, and station search capabilities.\n\n\
-                 **CONTEXT MANAGEMENT**:\n\
-                 - This server provides RESOURCES for automatic context access\n\
-                 - Available resources: dvb://user/context, dvb://user/location, dvb://user/destination\n\
-                 - Resources are automatically available - no tool call needed!\n\
-                 - For backward compatibility, get_user_context tool is also available\n\
-                 - Use elicit_origin/elicit_destination to save context for future use\n\
-                 - Context persists for the session duration\n\n\
-                 **RECOMMENDED WORKFLOW**:\n\
-                 1. Read dvb://user/context resource to check existing context (automatic!)\n\
-                 2. If context exists, use it directly without asking redundant questions\n\
-                 3. If context missing, ask user and save via elicit_origin/elicit_destination\n\
-                 4. For real-time updates, call tools as needed\n\n\
-                 **RESOURCES**:\n\
-                 - dvb://user/context: Complete user context (location + destination + status)\n\
-                 - dvb://user/location: Current user location (when set)\n\
-                 - dvb://user/destination: Current user destination (when set)\n\n\
-                 **PROMPTS**:\n\
-                 - navigation-assistant: General transit navigation and route planning\n\
-                 - departure-monitor: Real-time departure boards for stations\n\
-                 - trip-tracker: Track specific trips in real-time (requires trip_id from route planning)\n\n\
-                 **TRIP TRACKING NOTE**:\n\
-                 Trip tracking requires a trip_id obtained from get_route_details. Store trip IDs \
-                 in conversation context to provide updates when user asks about their journey.".to_string(),
-            ),
-            ..Default::default()
-        }
-    }
-
-    async fn list_resources(
-        &self,
-        _request: Option<PaginatedRequestParam>,
-        _: RequestContext<RoleServer>,
-    ) -> Result<ListResourcesResult, McpError> {
-        let origin = self.user_origin.lock().await.clone();
-        let location = self.user_location.lock().await.clone();
-        let destination = self.user_destination.lock().await.clone();
-
-        let mut resources = vec![
-            RawResource::new("dvb://user/context", "User Context".to_string()).no_annotation(),
-        ];
-
-        // Add origin resource if set
-        if origin.is_some() {
-            resources.push(
-                RawResource::new("dvb://user/origin", "User Origin".to_string()).no_annotation(),
-            );
-        }
-
-        // Add location resource if set
-        if location.is_some() {
-            resources.push(
-                RawResource::new("dvb://user/location", "User Current Location".to_string())
-                    .no_annotation(),
-            );
-        }
-
-        // Add destination resource if set
-        if destination.is_some() {
-            resources.push(
-                RawResource::new("dvb://user/destination", "User Destination".to_string())
-                    .no_annotation(),
-            );
-        }
-
-        Ok(ListResourcesResult {
-            resources,
-            next_cursor: None,
-            meta: None,
-        })
-    }
-
-    async fn read_resource(
-        &self,
-        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
-        _: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, McpError> {
-        match uri.as_str() {
-            "dvb://user/context" => {
-                let origin = self.user_origin.lock().await.clone();
-                let location = self.user_location.lock().await.clone();
-                let destination = self.user_destination.lock().await.clone();
-
-                let context = UserContext::new(origin, location, destination);
-
-                Ok(ReadResourceResult {
-                    contents: vec![ResourceContents::text(
-                        serde_json::to_string_pretty(&context).unwrap(),
-                        uri,
-                    )],
-                })
-            }
-            "dvb://user/origin" => {
-                let origin = self.user_origin.lock().await.clone();
-
-                match origin {
-                    Some(org) => {
-                        let data = serde_json::json!({
-                            "origin": org,
-                            "last_updated": chrono::Local::now().to_rfc3339(),
-                        });
-
-                        Ok(ReadResourceResult {
-                            contents: vec![ResourceContents::text(
-                                serde_json::to_string_pretty(&data).unwrap(),
-                                uri,
-                            )],
-                        })
-                    }
-                    None => Err(McpError::resource_not_found(
-                        "Origin not set",
-                        Some(serde_json::json!({ "uri": uri })),
-                    )),
-                }
-            }
-            "dvb://user/location" => {
-                let location = self.user_location.lock().await.clone();
-
-                match location {
-                    Some(loc) => {
-                        let data = serde_json::json!({
-                            "location": loc,
-                            "last_updated": chrono::Local::now().to_rfc3339(),
-                        });
-
-                        Ok(ReadResourceResult {
-                            contents: vec![ResourceContents::text(
-                                serde_json::to_string_pretty(&data).unwrap(),
-                                uri,
-                            )],
-                        })
-                    }
-                    None => Err(McpError::resource_not_found(
-                        "Current location not set",
-                        Some(serde_json::json!({ "uri": uri })),
-                    )),
-                }
-            }
-            "dvb://user/destination" => {
-                let destination = self.user_destination.lock().await.clone();
-
-                match destination {
-                    Some(dest) => {
-                        let data = serde_json::json!({
-                            "destination": dest,
-                            "last_updated": chrono::Local::now().to_rfc3339(),
-                        });
-
-                        Ok(ReadResourceResult {
-                            contents: vec![ResourceContents::text(
-                                serde_json::to_string_pretty(&data).unwrap(),
-                                uri,
-                            )],
-                        })
-                    }
-                    None => Err(McpError::resource_not_found(
-                        "Destination not set",
-                        Some(serde_json::json!({ "uri": uri })),
-                    )),
-                }
-            }
-            _ => {
-                // Check if it's a departures resource with pattern dvb://departures/{stop_id}
-                if uri.starts_with("dvb://departures/") {
-                    let stop_id = uri.strip_prefix("dvb://departures/").unwrap();
-
-                    // Fetch departures using dvb crate
-                    let monitor_params = dvb::monitor::Params {
-                        stopid: stop_id,
-                        mot: None,
-                        limit: Some(10),
-                        ..Default::default()
-                    };
-
-                    match dvb::monitor::departure_monitor(monitor_params).await {
-                        Ok(departures) => {
-                            let data = serde_json::json!({
-                                "stop_id": stop_id,
-                                "departures": departures,
-                                "last_updated": chrono::Local::now().to_rfc3339(),
-                            });
-
-                            Ok(ReadResourceResult {
-                                contents: vec![ResourceContents::text(
-                                    serde_json::to_string_pretty(&data).unwrap(),
-                                    uri,
-                                )],
-                            })
-                        }
-                        Err(error) => Err(McpError::resource_not_found(
-                            format!(
-                                "Failed to fetch departures for stop_id {}: {}",
-                                stop_id, error
-                            ),
-                            Some(serde_json::json!({ "uri": uri, "stop_id": stop_id })),
-                        )),
-                    }
-                } else {
-                    Err(McpError::resource_not_found(
-                        "Resource not found",
-                        Some(serde_json::json!({ "uri": uri })),
-                    ))
-                }
-            }
-        }
-    }
-
-    async fn list_resource_templates(
-        &self,
-        _request: Option<PaginatedRequestParam>,
-        _: RequestContext<RoleServer>,
-    ) -> Result<ListResourceTemplatesResult, McpError> {
-        let templates = vec![
-            RawResourceTemplate {
-                uri_template: "dvb://departures/{stop_id}".to_string(),
-                name: "Station Departures".to_string(),
-                title: Some("Real-time Departures".to_string()),
-                description: Some("Real-time departure information for a specific stop. Use the stop_id from find_stations or lookup_stop_id.".to_string()),
-                mime_type: Some("application/json".to_string()),
-            }.no_annotation(),
-        ];
-
-        Ok(ListResourceTemplatesResult {
-            next_cursor: None,
-            resource_templates: templates,
-            meta: None,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_dvb_coords_conversion() {
-        // Dresden Hauptbahnhof coords from DVB: (5657516, 4621644)
-        // Expected WGS84: approximately 51.040° N, 13.732° E
-        let coords = (5657516, 4621644);
-        let result = dvb_coords_to_wgs84(coords);
-
-        if let Err(e) = &result {
-            eprintln!("Conversion error: {}", e);
-        }
-        assert!(result.is_ok(), "Conversion should succeed: {:?}", result);
-        let (lat, lon) = result.unwrap();
-
-        println!("Converted coords: lat={:.6}, lon={:.6}", lat, lon);
-
-        // Check it's in the Dresden area
-        assert!((50.0..=52.0).contains(&lat), "Latitude should be in Dresden area");
-        assert!((13.0..=15.0).contains(&lon), "Longitude should be in Dresden area");
-
-        // More specific check for Hauptbahnhof area
-        assert!((51.03..=51.05).contains(&lat), "Should be near Dresden Hbf latitude");
-        assert!((13.72..=13.74).contains(&lon), "Should be near Dresden Hbf longitude");
     }
 }
