@@ -1,7 +1,15 @@
 [package]
 name = "dvb-mcp"
 version = "0.1.0"
+authors = ["Hendrik <hendrik@hoodie.de>"]
+description = "MCP server for Dresden public transport (DVB) route planning and schedule information"
+
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hendrik/dvb-mcp"
+keywords = ["mcp", "mcp-server", "transport", "public-transport"]
+categories = ["command-line-utilities"]
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0"

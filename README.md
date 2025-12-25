@@ -3,11 +3,16 @@
 A Model Context Protocol (MCP) server that empowers AI agents (and perhaps your coffee machine) to access Dresden’s public transit data, including trams, buses, and trains. This server makes it easy for systems to discover, plan, and monitor journeys using Dresden’s real-time and schedule-based transit information.
 
 I’ve always found Dresden’s transit system fascinating, but navigating its data can be tricky. This MCP server aims to make route planning and schedule queries as seamless as possible for both humans and AI. [Here’s an example](https://claude.ai/share/ca2ac42a-b476-46f1-9b74-ef8ccd100ba0) of how an AI can use MCP to plan a tram journey across Dresden.
+
 ## Installation
+
+```bash
+cargo install dvb-mcp
+```
 
 ### Prerequisites
 
-- Rust (edition 2021 or higher)
+- Rust (edition 2024 or higher)
 - An MCP-compatible AI client (e.g. Claude Desktop, MCP Inspector)
 
 ### Building from Source
