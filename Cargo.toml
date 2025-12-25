@@ -6,7 +6,7 @@ description = "MCP server for Dresden public transport (DVB) route planning and 
 
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/hendrik/dvb-mcp"
+repository = "https://github.com/hoodie/dvb-mcp"
 keywords = ["mcp", "mcp-server", "transport", "public-transport"]
 categories = ["command-line-utilities"]
 readme = "README.md"
