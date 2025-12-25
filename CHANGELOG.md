@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased (2025-12-25)
+## v0.1.0 (2025-12-25)
 
 ### Features
 
+* add more command line features
+([ff767c6](https://github.com/hoodie/dvb-mcp/commit/ff767c666cfb7ae534f1c6d9d65922e9ce88713a))
+* add basic CLI to list tools, prompts and context
+([78d8bbb](https://github.com/hoodie/dvb-mcp/commit/78d8bbb8cd76eb5d6bfc00cae42f0eb719393ba2))
 * add departure-monitor resource
 ([7620a8a](https://github.com/hoodie/dvb-mcp/commit/7620a8a6114a173e01016e50b7a4aab9397ae3b4))
 * add user context resource and setters
