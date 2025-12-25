@@ -638,3 +638,56 @@ impl DVBServer {
         Ok(success_json(&serde_json::json!({ "stop_id": stop.id })))
     }
 }
+
+impl DVBServer {
+    /// List all available tools
+    pub fn list_tools(&self) {
+        println!("Available Tools:");
+        println!("================\n");
+
+        for tool in self.tool_router.list_all() {
+            println!("  • {}", tool.name);
+            if let Some(description) = &tool.description {
+                println!("    {}\n", description);
+            } else {
+                println!();
+            }
+        }
+    }
+
+    /// List all available prompts
+    pub fn list_prompts(&self) {
+        println!("Available Prompts:");
+        println!("==================\n");
+
+        for prompt in self.prompt_router.list_all() {
+            println!("  • {}", prompt.name);
+            if let Some(description) = &prompt.description {
+                println!("    {}\n", description);
+            } else {
+                println!();
+            }
+        }
+    }
+
+    /// List context keys
+    pub fn list_context_keys(&self) {
+        println!("Context Keys:");
+        println!("=============\n");
+
+        // Generate schema from UserContext and serialize to JSON
+        let schema = rmcp::schemars::schema_for!(UserContext);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+
+        if let Some(properties) = schema_json["properties"].as_object() {
+            for (name, prop) in properties {
+                println!("  • {}", name);
+                if let Some(description) = prop["description"].as_str() {
+                    println!("    {}\n", description);
+                } else {
+                    println!();
+                }
+            }
+        }
+    }
+}
