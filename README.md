@@ -24,7 +24,38 @@ cd dvb-mcp
 cargo build --release
 ```
 
-## Configuration
+## Usage
+
+### Running the Server
+
+The server automatically detects how it's being run:
+
+- **Via MCP Client** (stdin piped): Automatically starts in server mode
+- **In Terminal** (interactive): Shows help and usage information
+- **Explicit Server Mode**: Use `dvb-mcp serve` to force server mode (optional)
+
+```bash
+# Show help and available commands
+dvb-mcp
+
+# Start server explicitly (optional - auto-detects when piped)
+dvb-mcp serve
+
+# List available tools
+dvb-mcp list tools
+
+# List available prompts
+dvb-mcp list prompts
+
+# List context keys
+dvb-mcp list context
+
+# Show version
+dvb-mcp --version
+dvb-mcp -V
+```
+
+### Configuration
 
 The server can be configured using environment variables:
 
@@ -121,8 +152,11 @@ Add the server to your Claude Desktop configuration:
 
 To test with MCP Inspector:
 
-1. Run: `npx @modelcontextprotocol/inspector`
-2. Enter server command: `/path/to/dvb-mcp`
+```bash
+npx @modelcontextprotocol/inspector /path/to/dvb-mcp
+```
+
+The server will automatically detect it's being run by an MCP client and start in server mode. The `serve` command is not needed - it's only useful for forcing server mode when auto-detection fails.
 
 ## Example Usage with Claude
 
@@ -165,7 +199,10 @@ cargo build
 cargo test
 ```
 
-**Note:** The server communicates via stdin/stdout using the MCP protocol. Running it directly will cause it to wait for MCP protocol messages—this is normal! Use MCP Inspector or an MCP client to interact.
+**Note:** The server uses TTY detection to determine if it's being run by an MCP client or directly in a terminal:
+- When run directly in a terminal, it displays help information
+- When started by an MCP client (stdin piped), it automatically enters server mode
+- The `serve` command is optional and only needed to force server mode if auto-detection fails
 
 ## Architecture
 
