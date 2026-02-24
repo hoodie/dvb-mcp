@@ -593,6 +593,8 @@ impl DVBServer {
             shorttermchanges: shorttermchanges.unwrap_or(true),
             format: format.as_deref().unwrap_or("json"),
             via: via.as_deref(),
+            mobility_settings: None,
+            standard_settings: None,
         };
 
         let route = match dvb::route::route_details(&params).await {

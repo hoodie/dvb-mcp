@@ -53,7 +53,7 @@ impl ServerHandler for DVBServer {
 
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         let origin = self.user_origin.lock().await.clone();
@@ -96,7 +96,7 @@ impl ServerHandler for DVBServer {
 
     async fn read_resource(
         &self,
-        ReadResourceRequestParam { uri }: ReadResourceRequestParam,
+        ReadResourceRequestParams { uri, .. }: ReadResourceRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         match uri.as_str() {
@@ -231,7 +231,7 @@ impl ServerHandler for DVBServer {
 
     async fn list_resource_templates(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         let templates = vec![
@@ -241,6 +241,7 @@ impl ServerHandler for DVBServer {
             title: Some("Real-time Departures".to_string()),
             description: Some("Real-time departure information for a specific stop. Use the stop_id from find_stations or lookup_stop_id.".to_string()),
             mime_type: Some("application/json".to_string()),
+            icons: None,
         }.no_annotation(),
     ];
 
