@@ -1,5 +1,12 @@
 # Changelog
 
+### [v0.1.2](https://github.com/hoodie/dvb-mcp/compare/v0.1.1...v0.1.2) (2026-02-24)
+
+#### Fixes
+
+* Update dependencies and fix struct param names for rmcp 0.16
+([42b22eb](https://github.com/hoodie/dvb-mcp/commit/42b22ebe5817d6137d9b1c6c898d1f7952588caf))
+
 ### [v0.1.1](https://github.com/hoodie/dvb-mcp/compare/v0.1.0...v0.1.1) (2025-12-25)
 
 #### Fixes
