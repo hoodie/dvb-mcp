@@ -13,42 +13,41 @@ use crate::server::{DVBServer, usercontext::UserContext};
 #[prompt_handler]
 impl ServerHandler for DVBServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-        capabilities: ServerCapabilities::builder()
-            .enable_tools()
-            .enable_prompts()
-            .enable_resources()
-            .build(),
-        server_info: Implementation::from_build_env(),
-        instructions: Some(
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::from_build_env())
+        .with_instructions(
             "Dresden public transport assistant with route planning, departure monitoring, \
-                 trip tracking, and station search capabilities.\n\n\
-                 **CONTEXT MANAGEMENT**:\n\
-                 - This server provides RESOURCES for automatic context access\n\
-                 - Available resources: dvb://user/context, dvb://user/location, dvb://user/destination\n\
-                 - Resources are automatically available - no tool call needed!\n\
-                 - For backward compatibility, get_user_context tool is also available\n\
-                 - Use elicit_origin/elicit_destination to save context for future use\n\
-                 - Context persists for the session duration\n\n\
-                 **RECOMMENDED WORKFLOW**:\n\
-                 1. Read dvb://user/context resource to check existing context (automatic!)\n\
-                 2. If context exists, use it directly without asking redundant questions\n\
-                 3. If context missing, ask user and save via elicit_origin/elicit_destination\n\
-                 4. For real-time updates, call tools as needed\n\n\
-                 **RESOURCES**:\n\
-                 - dvb://user/context: Complete user context (location + destination + status)\n\
-                 - dvb://user/location: Current user location (when set)\n\
-                 - dvb://user/destination: Current user destination (when set)\n\n\
-                 **PROMPTS**:\n\
-                 - navigation-assistant: General transit navigation and route planning\n\
-                 - departure-monitor: Real-time departure boards for stations\n\
-                 - trip-tracker: Track specific trips in real-time (requires trip_id from route planning)\n\n\
-                 **TRIP TRACKING NOTE**:\n\
-                 Trip tracking requires a trip_id obtained from get_route_details. Store trip IDs \
-                 in conversation context to provide updates when user asks about their journey.".to_string(),
-        ),
-        ..Default::default()
-    }
+             trip tracking, and station search capabilities.\n\n\
+             **CONTEXT MANAGEMENT**:\n\
+             - This server provides RESOURCES for automatic context access\n\
+             - Available resources: dvb://user/context, dvb://user/location, dvb://user/destination\n\
+             - Resources are automatically available - no tool call needed!\n\
+             - For backward compatibility, get_user_context tool is also available\n\
+             - Use elicit_origin/elicit_destination to save context for future use\n\
+             - Context persists for the session duration\n\n\
+             **RECOMMENDED WORKFLOW**:\n\
+             1. Read dvb://user/context resource to check existing context (automatic!)\n\
+             2. If context exists, use it directly without asking redundant questions\n\
+             3. If context missing, ask user and save via elicit_origin/elicit_destination\n\
+             4. For real-time updates, call tools as needed\n\n\
+             **RESOURCES**:\n\
+             - dvb://user/context: Complete user context (location + destination + status)\n\
+             - dvb://user/location: Current user location (when set)\n\
+             - dvb://user/destination: Current user destination (when set)\n\n\
+             **PROMPTS**:\n\
+             - navigation-assistant: General transit navigation and route planning\n\
+             - departure-monitor: Real-time departure boards for stations\n\
+             - trip-tracker: Track specific trips in real-time (requires trip_id from route planning)\n\n\
+             **TRIP TRACKING NOTE**:\n\
+             Trip tracking requires a trip_id obtained from get_route_details. Store trip IDs \
+             in conversation context to provide updates when user asks about their journey.",
+        )
     }
 
     async fn list_resources(
@@ -107,12 +106,10 @@ impl ServerHandler for DVBServer {
 
                 let context = UserContext::new(origin, location, destination);
 
-                Ok(ReadResourceResult {
-                    contents: vec![ResourceContents::text(
-                        serde_json::to_string_pretty(&context).unwrap(),
-                        uri,
-                    )],
-                })
+                Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                    serde_json::to_string_pretty(&context).unwrap(),
+                    uri,
+                )]))
             }
             "dvb://user/origin" => {
                 let origin = self.user_origin.lock().await.clone();
@@ -124,12 +121,10 @@ impl ServerHandler for DVBServer {
                             "last_updated": chrono::Local::now().to_rfc3339(),
                         });
 
-                        Ok(ReadResourceResult {
-                            contents: vec![ResourceContents::text(
-                                serde_json::to_string_pretty(&data).unwrap(),
-                                uri,
-                            )],
-                        })
+                        Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                            serde_json::to_string_pretty(&data).unwrap(),
+                            uri,
+                        )]))
                     }
                     None => Err(McpError::resource_not_found(
                         "Origin not set",
@@ -147,12 +142,10 @@ impl ServerHandler for DVBServer {
                             "last_updated": chrono::Local::now().to_rfc3339(),
                         });
 
-                        Ok(ReadResourceResult {
-                            contents: vec![ResourceContents::text(
-                                serde_json::to_string_pretty(&data).unwrap(),
-                                uri,
-                            )],
-                        })
+                        Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                            serde_json::to_string_pretty(&data).unwrap(),
+                            uri,
+                        )]))
                     }
                     None => Err(McpError::resource_not_found(
                         "Current location not set",
@@ -170,12 +163,10 @@ impl ServerHandler for DVBServer {
                             "last_updated": chrono::Local::now().to_rfc3339(),
                         });
 
-                        Ok(ReadResourceResult {
-                            contents: vec![ResourceContents::text(
-                                serde_json::to_string_pretty(&data).unwrap(),
-                                uri,
-                            )],
-                        })
+                        Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                            serde_json::to_string_pretty(&data).unwrap(),
+                            uri,
+                        )]))
                     }
                     None => Err(McpError::resource_not_found(
                         "Destination not set",
@@ -204,12 +195,10 @@ impl ServerHandler for DVBServer {
                                 "last_updated": chrono::Local::now().to_rfc3339(),
                             });
 
-                            Ok(ReadResourceResult {
-                                contents: vec![ResourceContents::text(
-                                    serde_json::to_string_pretty(&data).unwrap(),
-                                    uri,
-                                )],
-                            })
+                            Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                                serde_json::to_string_pretty(&data).unwrap(),
+                                uri,
+                            )]))
                         }
                         Err(error) => Err(McpError::resource_not_found(
                             format!(
@@ -235,14 +224,11 @@ impl ServerHandler for DVBServer {
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         let templates = vec![
-        RawResourceTemplate {
-            uri_template: "dvb://departures/{stop_id}".to_string(),
-            name: "Station Departures".to_string(),
-            title: Some("Real-time Departures".to_string()),
-            description: Some("Real-time departure information for a specific stop. Use the stop_id from find_stations or lookup_stop_id.".to_string()),
-            mime_type: Some("application/json".to_string()),
-            icons: None,
-        }.no_annotation(),
+            RawResourceTemplate::new("dvb://departures/{stop_id}", "Station Departures")
+                .with_title("Real-time Departures")
+                .with_description("Real-time departure information for a specific stop. Use the stop_id from find_stations or lookup_stop_id.")
+                .with_mime_type("application/json")
+                .no_annotation(),
     ];
 
         Ok(ListResourceTemplatesResult {

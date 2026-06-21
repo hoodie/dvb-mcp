@@ -33,22 +33,21 @@ pub struct OsmLinkResponse {
 /// Simple server with elicitation
 #[derive(Clone)]
 pub struct DVBServer {
+    tool_router: ToolRouter<DVBServer>,
+    prompt_router: PromptRouter<DVBServer>,
     user_origin: Arc<Mutex<Option<String>>>,
     user_location: Arc<Mutex<Option<String>>>,
     user_destination: Arc<Mutex<Option<String>>>,
-
-    tool_router: ToolRouter<DVBServer>,
-    prompt_router: PromptRouter<DVBServer>,
 }
 
 impl Default for DVBServer {
     fn default() -> Self {
         Self {
+            tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
             user_origin: Arc::new(Mutex::new(None)),
             user_location: Arc::new(Mutex::new(None)),
             user_destination: Arc::new(Mutex::new(None)),
-            tool_router: Self::tool_router(),
-            prompt_router: Self::prompt_router(),
         }
     }
 }
